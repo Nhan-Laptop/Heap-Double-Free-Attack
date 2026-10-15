@@ -45,6 +45,20 @@ Giải phóng bộ nhớ nhiều hơn một lần là hành vi không xác đị
 
 Bây giờ, khi bạn yêu cầu một vùng nhớ mới thông qua malloc, bộ cấp phát có thể trả về chính vùng nhớ đã được giải phóng hai lần. Điều này dẫn đến hai con trỏ cùng trỏ về một vùng nhớ. Nếu attacker kiểm soát được một trong hai con trỏ thì coi như kiểm soát cả vùng nhớ đó, dẫn tới nhiều hệ lụy như chèn malware hoặc thực thi shellcode.
 
+### Điều kiện phát sinh
+
+- **Cốt lõi:** `free()` được gọi hai lần lên cùng một địa chỉ, và giữa hai lần đó vùng nhớ không được cấp phát lại — tức con trỏ không bị set NULL sau `free()`, hoặc có hai con trỏ alias cùng trỏ về một vùng nhớ.
+- **Các mẫu code điển hình:**
+  - hai con trỏ alias: `p = q = malloc(...); free(p); free(q);`
+  - nhánh xử lý lỗi đã `free()`, rồi nhánh cleanup chung `free()` lại
+  - copy nông (shallow copy) struct/object chứa con trỏ
+  - `free()` xong không NULL hóa → destructor/cleanup gọi lần hai
+  - use-after-free (CWE-416) dẫn tới `free()` lần nữa
+  - `realloc` hỏng rồi `free()` cả con trỏ cũ lẫn mới
+  - đa luồng: hai thread cùng `free()` một object, hoặc sai refcount
+- **Lọt qua allocator:** fastbin cũ chỉ so phần tử đầu danh sách; tcache (glibc ≥ 2.26) phát hiện qua `key` và duyệt list, nên phải né bằng cách lấp đầy tcache bin hoặc ghi đè `key`.
+- **Nguyên nhân gốc:** quyền sở hữu vùng nhớ không rõ ràng hoặc không được quản lý tại một chỗ duy nhất.
+
 Ví dụ:
 
 ```c
@@ -79,6 +93,9 @@ Trước tiên, `free(i)` và `free(h)` giải phóng hai chunk kích thước `
 ```
 h → i → h
 ```
+
+
+
 
 ## Tài liệu tham khảo
 
