@@ -56,8 +56,23 @@ Bây giờ, khi bạn yêu cầu một vùng nhớ mới thông qua malloc, bộ
   - use-after-free (CWE-416) dẫn tới `free()` lần nữa
   - `realloc` hỏng rồi `free()` cả con trỏ cũ lẫn mới
   - đa luồng: hai thread cùng `free()` một object, hoặc sai refcount
-- **Lọt qua allocator:** fastbin cũ chỉ so phần tử đầu danh sách; tcache (glibc ≥ 2.26) phát hiện qua `key` và duyệt list, nên phải né bằng cách lấp đầy tcache bin hoặc ghi đè `key`.
+- **Lọt qua allocator:** không phải mọi lần free trùng đều bị chặn — phụ thuộc phiên bản glibc (bảng bên dưới).
 - **Nguyên nhân gốc:** quyền sở hữu vùng nhớ không rõ ràng hoặc không được quản lý tại một chỗ duy nhất.
+
+**Free trùng có lọt qua allocator hay không, theo phiên bản glibc:**
+
+| glibc | Kiểm tra của allocator | Hành vi free trùng | OS tiêu biểu |
+| --- | --- | --- | --- |
+| ≤ 2.25 | Chưa có tcache; fastbin chỉ so phần tử đầu danh sách | Lọt nếu free xen kẽ: `free(a); free(b); free(a)` | CentOS 7 (2.17), Ubuntu 16.04 (2.23), Debian 9 (2.24) |
+| 2.26 – 2.28 | Có tcache nhưng chưa kiểm tra trùng lặp | `free(a); free(a)` lọt ngay (tcache dup) | Ubuntu 18.04 (2.27), RHEL 8 (2.28), Debian 10 (2.28) |
+| 2.29 – 2.31 | tcache kiểm tra `key` + duyệt list | Phải ghi đè `key` (qua UAF) hoặc lấp đầy tcache bin cho chunk rơi xuống fastbin, rồi free xen kẽ | Ubuntu 20.04 (2.31), Debian 11 (2.31) |
+| ≥ 2.32 | Thêm safe-linking cho `fd` của fastbin/tcache | Vẫn lọt như trên, nhưng giả mạo `fd` cần heap leak | RHEL 9 (2.34), Ubuntu 22.04 (2.35), Debian 12 (2.36), Ubuntu 24.04 (2.39) |
+
+Ghi chú:
+
+- tcache có từ glibc 2.26: mỗi bin giữ tối đa 7 chunk (chunk ≤ `0x410`), tắt được bằng `GLIBC_TUNABLES=glibc.malloc.tcache_count=0`.
+- Safe-linking chỉ mã hóa/kiểm tra con trỏ `fd`, **không** chặn double free.
+- Chunk trong ví dụ bên dưới (`BUFSIZE2 = 248` → chunk `0x100`) nằm trong tcache (glibc ≥ 2.26), không phải fastbin (fastbin 64-bit chỉ tới `0x80`).
 
 Ví dụ:
 
