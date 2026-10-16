@@ -15,9 +15,13 @@ Phân tích lỗi giải phóng cùng một vùng nhớ nhiều lần, làm sai 
 
 ## Stack và Heap
 
+![Stack và Heap: biến cục bộ nằm trên stack, đối tượng nằm trên heap](image-1.png)
+
 ### Stack
 
 Stack là vùng nhớ lưu biến local, tham số hàm (function parameters) và thông tin về function call (như return addresses).
+
+![Nguyên tắc LIFO: push vào và pop ra ở đỉnh stack](image-2.png)
 
 - Stack hoạt động theo nguyên tắc LIFO — last in, first out (như stack trong cấu trúc dữ liệu).
 - Call stack theo dõi các function call: mỗi lần một hàm được gọi, một stack frame được push vào stack; khi thoát khỏi hàm, frame đó được pop ra.
@@ -30,12 +34,123 @@ Stack là vùng nhớ lưu biến local, tham số hàm (function parameters) v�
 
 ### Heap
 
+![Mỗi thread có registers và stack riêng; code, data và heap dùng chung](image-3.png)
+
 Heap là vùng nhớ lớn dùng cho cấp phát động, chứa dữ liệu mà kích thước hoặc thời điểm xuất hiện chỉ được biết khi chương trình chạy.
 
 - Bạn tự cấp phát bộ nhớ trên heap bằng malloc/free.
 - Vòng đời dữ liệu trên heap do người lập trình kiểm soát (hoặc garbage collector, với các ngôn ngữ có cơ chế quản lý bộ nhớ tự động).
 - Heap thường lớn hơn stack. Các đối tượng, cấu trúc dữ liệu lớn (như mảng, danh sách liên kết) và dữ liệu cần chia sẻ giữa các hàm hoặc tồn tại lâu hơn một lần gọi hàm đều được lưu trên heap.
 - Mỗi thread có stack riêng, nhưng heap dùng chung cho tất cả thread.
+
+## Memory Management in Operating System
+
+Quản lý bộ nhớ trong hệ điều hành là quá trình kiểm soát và tổ chức bộ nhớ máy tính thông qua phân bổ các phần (được gọi là các khối) cho các chương trình thực thi khác nhau, nhằm mục đích cải thiện hiệu suất tổng thể của chương trình.
+
+![Phân cấp bộ nhớ: registers, cache, main memory, đĩa, băng từ](image.png)
+
+### Các kỹ thuật phân bổ bộ nhớ
+
+![Các kỹ thuật quản lý bộ nhớ: contiguous và non-contiguous](image-4.png)
+
+Có 2 nhánh phân bổ bộ nhớ; ở bài này tập trung vào nhánh thứ 2 — Non-Contiguous Memory Allocation.
+
+#### Non-Contiguous Memory Allocation
+
+Là một kỹ thuật quản lý bộ nhớ trong đó tiến trình được chia ra làm nhiều phần nhỏ và lưu ở các vị trí khác nhau trên bộ nhớ chính. Không như contiguous allocation, toàn bộ tiến trình không cần phải nạp vào một ô nhớ đơn liền kề, việc này làm tăng hiệu suất chương trình và giảm tình trạng phân mảnh.
+
+Các kỹ thuật được dùng:
+
+- Paging: Chia một tiến trình thành nhiều trang nhớ (page) có kích thước cố định, bộ nhớ chia thành từng khung (frame) cùng kích thước.
+- Segmentation: Chia một tiến trình thành nhiều đoạn logic với kích thước thay đổi, ví dụ: mã lệnh, dữ liệu, stack.
+- Segmentation with Paging: kết hợp 2 kỹ thuật trên để giảm phân mảnh.
+
+### Các cơ chế quản lý bộ nhớ
+
+#### Virtual memory
+
+Cho phép chương trình có kích thước lớn hơn RAM vẫn thực thi được, bằng cách dùng không gian ổ cứng như là phần mở rộng.
+
+#### Page Replacement Algorithms (PRA)
+
+Xác định trang nào cần xóa khỏi bộ nhớ khi bộ nhớ đầy.
+
+#### Demand Paging
+
+Chỉ load page khi tiến trình cần bộ nhớ — giảm sử dụng bộ nhớ không cần thiết và các sự kiện I/O.
+
+## How is DATA stored in heap
+
+Trong các hệ điều hành Linux/Unix, khi một tiến trình cần cấp phát bộ nhớ động thông qua các hàm như `malloc()`, `calloc()`, hay `realloc()`, bộ cấp phát bộ nhớ (Heap Allocator — mặc định là `ptmalloc` trong `glibc`) sẽ không chỉ lưu thuần túy dữ liệu người dùng. Thay vào đó, dữ liệu được đóng gói dưới dạng các Heap Chunks.
+
+### Cấu trúc của một Heap Chunk
+
+Mỗi vùng nhớ trên Heap được quản lý theo một cấu trúc chunk bao gồm cả Metadata (thông tin quản lý) và User Data (dữ liệu thực tế):
+
+```text
+    Allocated Chunk                      Freed Chunk
++-------------------+                +-------------------+
+|     prev_size     |                |     prev_size     |
++-------------------+                +-------------------+
+|     size | A|M|P  |                |     size | A|M|P  |
++-------------------+                +-------------------+
+|                   |                |        fd         |
+|     User Data     |                +-------------------+
+|   (Payload Area)  |                |        bk         |
+|                   |                +-------------------+
+|                   |                |     Unused...     |
++-------------------+                +-------------------+
+
+```
+
+- `prev_size`: Kích thước của chunk liền kề phía trước — chỉ có ý nghĩa khi chunk phía trước đã được giải phóng (free).
+- `size`: Kích thước của chunk hiện tại (bao gồm cả phần Header). 3 bits cuối của `size` được dùng làm các cờ trạng thái (Flags):
+  - `A` (NON_MAIN_ARENA): Đánh dấu chunk thuộc Arena phụ hay Arena chính.
+  - `M` (IS_MMAPPED): Đánh dấu chunk được cấp phát trực tiếp bằng `mmap()`.
+  - `P` (PREV_INUSE): Bằng 1 nếu chunk ngay trước đó đang được sử dụng, bằng 0 nếu chunk trước đó đã bị free.
+- `fd` (Forward Pointer) & `bk` (Backward Pointer): Chỉ xuất hiện khi chunk đã bị `free()`. Hai con trỏ này biến chunk rảnh thành một nút (node) nằm trong các danh sách liên kết để chờ tái sử dụng.
+
+## Bins & Memory Allocations
+
+Để quản lý và tái sử dụng các khối bộ nhớ rảnh (freed chunks) một cách tối ưu nhất, glibc malloc sử dụng các danh sách liên kết gọi là Bins. Khi người dùng gọi `free()`, chunk bị giải phóng sẽ không lập tức được trả về cho Hệ điều hành, mà được phân loại và đưa vào một trong các danh sách liên kết này tùy theo kích thước và trạng thái.
+
+### Tcache (Per-Thread Cache) Bins
+
+Tcache giảm thiểu hiện tượng nghẽn do tranh chấp khóa (lock contention) trong các ứng dụng đa luồng (multithreaded): trước khi có tcache, các luồng phải dùng chung một vùng quản lý Heap (Arena) và phải chờ đợi nhau khi gọi `malloc()` hoặc `free()`.
+
+Là một cơ chế bộ nhớ đệm cục bộ dành riêng cho từng luồng (thread), được tích hợp vào bộ cấp phát bộ nhớ `ptmalloc` của thư viện chuẩn glibc từ phiên bản 2.26 (phát hành tháng 8/2017) để tối ưu cho các ứng dụng đa luồng.
+
+Cơ chế hoạt động:
+
+- Mỗi luồng sở hữu một cấu trúc tcache riêng.
+- Khi luồng giải phóng một khối bộ nhớ nhỏ (nhỏ hơn ~1032 bytes trên kiến trúc 64-bit), khối bộ nhớ này được đưa ngay vào tcache của luồng đó mà không cần lấy lock.
+- Khi luồng xin cấp phát bộ nhớ mới (`malloc`), nó sẽ kiểm tra tcache của mình trước tiên. Nếu có sẵn khối bộ nhớ phù hợp, nó sẽ lấy ra sử dụng ngay lập tức với tốc độ truy xuất cực nhanh.
+
+Quản lý các chunk nhỏ (tối đa ~1032 bytes trên 64-bit) bằng danh sách liên kết đơn (LIFO). Mỗi bin chứa tối đa 7 chunks.
+
+### Fastbins
+
+Quản lý các chunk có kích thước nhỏ (mặc định tối đa 128 bytes trên 64-bit, 64 bytes trên 32-bit).
+
+Sử dụng danh sách liên kết đơn (LIFO). Các chunk trong fastbin không bị gộp (coalesce) ngay lập tức kể cả khi nằm cạnh nhau, giúp tăng tốc độ tái cấp phát.
+
+### Unsorted bin
+
+Danh sách liên kết đôi (FIFO).
+
+Khi một chunk bị free (và không rơi vào tcache hay fastbins), nó được tạm đưa vào Unsorted bin. Tại lần gọi `malloc()` tiếp theo, allocator sẽ duyệt qua Unsorted bin để tìm chunk phù hợp, đồng thời phân loại các chunk chưa dùng về đúng Smallbins hoặc Largebins.
+
+### Smallbins
+
+Quản lý các chunk có kích thước nhỏ hơn 512 bytes (32-bit) hoặc 1024 bytes (64-bit).
+
+Danh sách liên kết đôi (FIFO). Tất cả các chunk trong cùng một Smallbin có kích thước hoàn toàn bằng nhau.
+
+### Large bins
+
+Quản lý các chunk có kích thước từ 1024 bytes trở lên (64-bit).
+
+Các chunk trong cùng một Largebin có thể có kích thước khác nhau (nằm trong một khoảng nhất định) và được sắp xếp theo thứ tự kích thước giảm dần để tối ưu cho thuật toán Best-Fit.
 
 ## Double free
 
@@ -109,11 +224,29 @@ Trước tiên, `free(i)` và `free(h)` giải phóng hai chunk kích thước `
 h → i → h
 ```
 
+## Tcache poisoning
 
+Như đã đề cập ở phần trước, với bản patch mới của tcache, ta không thể dùng cách đơn thuần (free xen kẽ) để thực hiện double free attack. Ở phần này mình sẽ giới thiệu hướng mới để bypass vấn đề trên.
 
+Một freed tcache chunk được dùng lại tại một `tcache_entry`:
+
+```c
+struct tcache_entry {
+    struct tcache_entry *next;
+    uintptr_t key;
+};
+```
+
+Dễ thấy mỗi lần free xong, qword đầu tiên của dữ liệu người dùng sẽ trở thành con trỏ của singly linked list (sll) và qword sau được dùng làm double free check. Nếu lỗ hổng cho phép chúng ta ghi đè lên 1 trong 2, thường biến thành:
+
+- Arbitrary allocation bằng cách làm hỏng `next`.
+- Double-free bypass bằng cách làm hỏng `key` ← trọng tâm phần seminar của chúng ta.
 
 ## Tài liệu tham khảo
 
 - Blog cá nhân — Learning Malware for Beginner (Part 1): https://nhan-laptop.github.io/posts/malware-binary/learning-Malware-for-beginner-part-1.html
 - HackTricks — Double free: https://hacktricks.wiki/en/binary-exploitation/libc-heap/double-free.html
 - OWASP — Doubly freeing memory: https://community.owasp.org/vulnerabilities/Doubly_freeing_memory
+- HackTricks — Bins & memory allocations: https://hacktricks.wiki/en/binary-exploitation/libc-heap/bins-and-memory-allocations.html#bins--memory-allocations
+- GeeksforGeeks — Memory Management in Operating System: https://www.geeksforgeeks.org/operating-systems/memory-management-in-operating-system/
+- HackTricks — Tcache bin attack: https://hacktricks.wiki/en/binary-exploitation/libc-heap/tcache-bin-attack.html
