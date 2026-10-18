@@ -13,79 +13,64 @@ Phân tích lỗi giải phóng cùng một vùng nhớ nhiều lần, làm sai 
 - Đề xuất biện pháp khắc phục hoặc phòng ngừa.
 - Phân tích các điều kiện, cơ chế bảo vệ và giới hạn ảnh hưởng đến khả năng khai thác thành công.
 
-## Stack và Heap
+## 1. Stack và Heap
 
 ![Stack và Heap: biến cục bộ nằm trên stack, đối tượng nằm trên heap](image-1.png)
 
-### Stack
+### 1.1 Stack
 
-Stack là vùng nhớ lưu biến local, tham số hàm (function parameters) và thông tin về function call (như return addresses).
+Stack là vùng nhớ lưu biến local, tham số hàm (function parameters) và thông tin về function call (như return address).
 
 ![Nguyên tắc LIFO: push vào và pop ra ở đỉnh stack](image-2.png)
 
-- Stack hoạt động theo nguyên tắc LIFO — last in, first out (như stack trong cấu trúc dữ liệu).
-- Call stack theo dõi các function call: mỗi lần một hàm được gọi, một stack frame được push vào stack; khi thoát khỏi hàm, frame đó được pop ra.
-- Dữ liệu trên stack chỉ tồn tại trong thời gian hàm chạy. Stack tự mở rộng và thu hẹp theo lời gọi hàm và khi hàm trả về.
-- Khi một hàm trả về, toàn bộ biến stack bị hủy và con trỏ stack (stack pointer) quay về vị trí cũ.
-- Bạn không phải tự giải phóng bộ nhớ stack như với heap.
-- Con trỏ (pointer) là biến lưu địa chỉ bộ nhớ. Có thể dùng con trỏ để trỏ tới dữ liệu trên stack, nhưng nếu trả về con trỏ tới một biến local thì con trỏ đó sẽ không còn hợp lệ sau khi hàm kết thúc.
-- Stack có kích thước cố định do OS quy định (thường vài trăm KB đến vài MB cho mỗi tiến trình).
+- Hoạt động theo nguyên tắc LIFO — last in, first out.
+- Call stack theo dõi các lời gọi hàm: mỗi lần hàm được gọi, một stack frame được push vào; khi hàm trả về, frame đó bị pop ra.
+- Dữ liệu trên stack chỉ tồn tại trong thời gian hàm chạy; khi hàm trả về, biến stack bị hủy và stack pointer quay về vị trí cũ.
+- Không phải tự giải phóng bộ nhớ stack như với heap.
+- Con trỏ (pointer) là biến lưu địa chỉ bộ nhớ. Trả về con trỏ tới biến local của một hàm là sai — con trỏ đó không còn hợp lệ sau khi hàm kết thúc.
+- Kích thước stack do OS quy định (mặc định 8 MB trên Linux, đổi bằng `ulimit -s`); mỗi thread có stack riêng.
 - Stack overflow xảy ra khi chương trình dùng nhiều bộ nhớ stack hơn mức được cấp.
 
-### Heap
+### 1.2 Heap
 
 ![Mỗi thread có registers và stack riêng; code, data và heap dùng chung](image-3.png)
 
 Heap là vùng nhớ lớn dùng cho cấp phát động, chứa dữ liệu mà kích thước hoặc thời điểm xuất hiện chỉ được biết khi chương trình chạy.
 
-- Bạn tự cấp phát bộ nhớ trên heap bằng malloc/free.
-- Vòng đời dữ liệu trên heap do người lập trình kiểm soát (hoặc garbage collector, với các ngôn ngữ có cơ chế quản lý bộ nhớ tự động).
-- Heap thường lớn hơn stack. Các đối tượng, cấu trúc dữ liệu lớn (như mảng, danh sách liên kết) và dữ liệu cần chia sẻ giữa các hàm hoặc tồn tại lâu hơn một lần gọi hàm đều được lưu trên heap.
-- Mỗi thread có stack riêng, nhưng heap dùng chung cho tất cả thread.
+- Cấp phát/giải phóng bằng `malloc()`/`free()` (C/C++).
+- Vòng đời dữ liệu do người lập trình kiểm soát (trừ ngôn ngữ có garbage collector).
+- Heap thường lớn hơn stack; dùng cho object, cấu trúc dữ liệu lớn (mảng, danh sách liên kết) và dữ liệu cần tồn tại lâu hơn một lần gọi hàm.
+- Mỗi thread có stack riêng, heap (main arena) dùng chung; glibc có thể cấp thêm arena phụ cho thread để giảm tranh chấp khóa.
 
-## Memory Management in Operating System
+## 2. Quản lý bộ nhớ trong hệ điều hành
 
-Quản lý bộ nhớ trong hệ điều hành là quá trình kiểm soát và tổ chức bộ nhớ máy tính thông qua phân bổ các phần (được gọi là các khối) cho các chương trình thực thi khác nhau, nhằm mục đích cải thiện hiệu suất tổng thể của chương trình.
+Quản lý bộ nhớ là quá trình kiểm soát và tổ chức bộ nhớ thông qua phân bổ các khối cho các chương trình thực thi, nhằm cải thiện hiệu suất tổng thể.
 
 ![Phân cấp bộ nhớ: registers, cache, main memory, đĩa, băng từ](image.png)
 
-### Các kỹ thuật phân bổ bộ nhớ
+### 2.1 Kỹ thuật phân bổ bộ nhớ
 
 ![Các kỹ thuật quản lý bộ nhớ: contiguous và non-contiguous](image-4.png)
 
-Có 2 nhánh phân bổ bộ nhớ; ở bài này tập trung vào nhánh thứ 2 — Non-Contiguous Memory Allocation.
-
-#### Non-Contiguous Memory Allocation
-
-Là một kỹ thuật quản lý bộ nhớ trong đó tiến trình được chia ra làm nhiều phần nhỏ và lưu ở các vị trí khác nhau trên bộ nhớ chính. Không như contiguous allocation, toàn bộ tiến trình không cần phải nạp vào một ô nhớ đơn liền kề, việc này làm tăng hiệu suất chương trình và giảm tình trạng phân mảnh.
+Có hai nhánh phân bổ bộ nhớ: contiguous và non-contiguous. Bài này tập trung vào **Non-Contiguous Memory Allocation**: tiến trình được chia thành nhiều phần nhỏ, lưu ở các vị trí khác nhau trên bộ nhớ chính — tăng hiệu suất và giảm phân mảnh.
 
 Các kỹ thuật được dùng:
 
-- Paging: Chia một tiến trình thành nhiều trang nhớ (page) có kích thước cố định, bộ nhớ chia thành từng khung (frame) cùng kích thước.
-- Segmentation: Chia một tiến trình thành nhiều đoạn logic với kích thước thay đổi, ví dụ: mã lệnh, dữ liệu, stack.
-- Segmentation with Paging: kết hợp 2 kỹ thuật trên để giảm phân mảnh.
+- **Paging**: chia tiến trình thành nhiều trang nhớ (page) kích thước cố định, bộ nhớ chia thành từng khung (frame) cùng kích thước.
+- **Segmentation**: chia tiến trình thành nhiều đoạn logic kích thước thay đổi (mã lệnh, dữ liệu, stack...).
+- **Segmentation with Paging**: kết hợp hai kỹ thuật trên để giảm phân mảnh.
 
-### Các cơ chế quản lý bộ nhớ
+### 2.2 Cơ chế quản lý bộ nhớ
 
-#### Virtual memory
+- **Virtual memory**: cấp cho mỗi tiến trình một không gian địa chỉ ảo riêng, ánh xạ tới RAM và swap — nhờ đó chương trình lớn hơn RAM vẫn chạy được.
+- **Page Replacement Algorithms (PRA)**: xác định trang nào bị đưa ra khỏi bộ nhớ khi bộ nhớ đầy.
+- **Demand Paging**: chỉ nạp trang khi tiến trình thực sự cần — giảm bộ nhớ và I/O không cần thiết.
 
-Cho phép chương trình có kích thước lớn hơn RAM vẫn thực thi được, bằng cách dùng không gian ổ cứng như là phần mở rộng.
+## 3. Dữ liệu trên heap được lưu thế nào?
 
-#### Page Replacement Algorithms (PRA)
+Trên Linux/Unix, khi tiến trình cấp phát động bằng `malloc()`, `calloc()` hay `realloc()`, bộ cấp phát (mặc định là `ptmalloc` trong `glibc`) không lưu thuần dữ liệu người dùng mà đóng gói thành các **heap chunk** gồm metadata + user data.
 
-Xác định trang nào cần xóa khỏi bộ nhớ khi bộ nhớ đầy.
-
-#### Demand Paging
-
-Chỉ load page khi tiến trình cần bộ nhớ — giảm sử dụng bộ nhớ không cần thiết và các sự kiện I/O.
-
-## How is DATA stored in heap
-
-Trong các hệ điều hành Linux/Unix, khi một tiến trình cần cấp phát bộ nhớ động thông qua các hàm như `malloc()`, `calloc()`, hay `realloc()`, bộ cấp phát bộ nhớ (Heap Allocator — mặc định là `ptmalloc` trong `glibc`) sẽ không chỉ lưu thuần túy dữ liệu người dùng. Thay vào đó, dữ liệu được đóng gói dưới dạng các Heap Chunks.
-
-### Cấu trúc của một Heap Chunk
-
-Mỗi vùng nhớ trên Heap được quản lý theo một cấu trúc chunk bao gồm cả Metadata (thông tin quản lý) và User Data (dữ liệu thực tế):
+### 3.1 Cấu trúc một chunk
 
 ```text
     Allocated Chunk                      Freed Chunk
@@ -94,102 +79,93 @@ Mỗi vùng nhớ trên Heap được quản lý theo một cấu trúc chunk ba
 +-------------------+                +-------------------+
 |     size | A|M|P  |                |     size | A|M|P  |
 +-------------------+                +-------------------+
-|                   |                |        fd         |
+|                   |                |        fd         |  (tcache: next)
 |     User Data     |                +-------------------+
-|   (Payload Area)  |                |        bk         |
+|   (Payload Area)  |                |        bk         |  (tcache: key, 2.29+)
 |                   |                +-------------------+
 |                   |                |     Unused...     |
 +-------------------+                +-------------------+
-
 ```
 
-- `prev_size`: Kích thước của chunk liền kề phía trước — chỉ có ý nghĩa khi chunk phía trước đã được giải phóng (free).
-- `size`: Kích thước của chunk hiện tại (bao gồm cả phần Header). 3 bits cuối của `size` được dùng làm các cờ trạng thái (Flags):
-  - `A` (NON_MAIN_ARENA): Đánh dấu chunk thuộc Arena phụ hay Arena chính.
-  - `M` (IS_MMAPPED): Đánh dấu chunk được cấp phát trực tiếp bằng `mmap()`.
-  - `P` (PREV_INUSE): Bằng 1 nếu chunk ngay trước đó đang được sử dụng, bằng 0 nếu chunk trước đó đã bị free.
-- `fd` (Forward Pointer) & `bk` (Backward Pointer): Chỉ xuất hiện khi chunk đã bị `free()`. Hai con trỏ này biến chunk rảnh thành một nút (node) nằm trong các danh sách liên kết để chờ tái sử dụng.
+- `prev_size`: kích thước chunk liền trước; chỉ có ý nghĩa khi chunk đó đang rảnh (bit `P` của chunk hiện tại bằng 0).
+- `size`: kích thước chunk hiện tại, **tính cả header 0x10 byte**; luôn là bội số của 16, tối thiểu 0x20 (64-bit). 3 bit thấp là cờ trạng thái:
+  - `P` (PREV_INUSE): bằng 1 nếu chunk liền trước đang được dùng.
+  - `M` (IS_MMAPPED): đánh dấu chunk được cấp trực tiếp bằng `mmap()`.
+  - `A` (NON_MAIN_ARENA): đánh dấu chunk thuộc arena phụ.
+- Khi chunk bị `free()`, 16 byte đầu của user data trở thành con trỏ của danh sách liên kết:
+  - `fd`/`next`: trỏ tới chunk kế tiếp trong bin;
+  - `bk`: trỏ tới chunk trước đó (bin liên kết đôi); với tcache, ô này là `key` — dùng để phát hiện double free (glibc 2.29+).
 
-## Bins & Memory Allocations
+Hai khái niệm đi kèm (dùng lại ở các phần sau):
 
-Để quản lý và tái sử dụng các khối bộ nhớ rảnh (freed chunks) một cách tối ưu nhất, glibc malloc sử dụng các danh sách liên kết gọi là Bins. Khi người dùng gọi `free()`, chunk bị giải phóng sẽ không lập tức được trả về cho Hệ điều hành, mà được phân loại và đưa vào một trong các danh sách liên kết này tùy theo kích thước và trạng thái.
+- **top chunk (wilderness)**: chunk trống cuối cùng của heap; mỗi lần cấp phát, allocator cắt dần từ top; hết chỗ thì mở rộng heap bằng `brk` hoặc `mmap()`.
+- **consolidation (hợp nhất)**: khi free, nếu chunk kề với một chunk rảnh khác (hoặc top), chúng được gộp thành một chunk lớn hơn.
 
-### Tcache (Per-Thread Cache) Bins
+## 4. Bins & cấp phát bộ nhớ
 
-Tcache giảm thiểu hiện tượng nghẽn do tranh chấp khóa (lock contention) trong các ứng dụng đa luồng (multithreaded): trước khi có tcache, các luồng phải dùng chung một vùng quản lý Heap (Arena) và phải chờ đợi nhau khi gọi `malloc()` hoặc `free()`.
+Khi `free()` được gọi, chunk không được trả ngay cho OS mà được phân loại vào các danh sách liên kết gọi là **bin**, tuỳ theo kích thước và trạng thái.
 
-Là một cơ chế bộ nhớ đệm cục bộ dành riêng cho từng luồng (thread), được tích hợp vào bộ cấp phát bộ nhớ `ptmalloc` của thư viện chuẩn glibc từ phiên bản 2.26 (phát hành tháng 8/2017) để tối ưu cho các ứng dụng đa luồng.
+| Bin | Cấu trúc | Kích thước chunk (64-bit) | Thứ tự | Đặc điểm chính |
+| --- | --- | --- | --- | --- |
+| **tcache** | liên kết đơn, riêng mỗi thread | ≤ `0x410` (dữ liệu ≤ 1032 B) | LIFO | tối đa 7 chunk/bin; không cần lock; có `key` (2.29+) và safe-linking (2.32+) |
+| **fastbin** | liên kết đơn | ≤ `0x80` (dữ liệu ≤ 120 B) | LIFO | không coalesce; khi free chỉ kiểm tra trùng với phần tử đầu danh sách |
+| **unsorted bin** | liên kết đôi | các chunk còn lại, chưa phân loại | FIFO | "trạm trung chuyển" khi free; nguồn leak địa chỉ libc phổ biến |
+| **smallbin** | liên kết đôi | < `0x400` | FIFO | mỗi bin ứng với một kích thước cố định |
+| **largebin** | liên kết đôi | ≥ `0x400` | size giảm dần | tối ưu cho thuật toán best-fit |
 
-Cơ chế hoạt động:
+Ghi chú:
 
-- Mỗi luồng sở hữu một cấu trúc tcache riêng.
-- Khi luồng giải phóng một khối bộ nhớ nhỏ (nhỏ hơn ~1032 bytes trên kiến trúc 64-bit), khối bộ nhớ này được đưa ngay vào tcache của luồng đó mà không cần lấy lock.
-- Khi luồng xin cấp phát bộ nhớ mới (`malloc`), nó sẽ kiểm tra tcache của mình trước tiên. Nếu có sẵn khối bộ nhớ phù hợp, nó sẽ lấy ra sử dụng ngay lập tức với tốc độ truy xuất cực nhanh.
+- **tcache** ra đời ở glibc 2.26 nhằm giảm tranh chấp khóa giữa các thread (trước đó mọi thread dùng chung arena).
+- Thứ tự khi free: chunk nhỏ vào tcache trước; nếu bin tcache đầy (7 chunk) mới xuống fastbin; còn lại vào unsorted bin và được phân loại về smallbin/largebin ở lần `malloc()` kế tiếp.
+- Tắt tcache khi nghiên cứu: `GLIBC_TUNABLES=glibc.malloc.tcache_count=0 ./binary`.
 
-Quản lý các chunk nhỏ (tối đa ~1032 bytes trên 64-bit) bằng danh sách liên kết đơn (LIFO). Mỗi bin chứa tối đa 7 chunks.
+## 5. Double free
 
-### Fastbins
+**Bản chất:** `free()` được gọi nhiều hơn một lần trên cùng một vùng nhớ là hành vi không xác định (undefined behavior), làm hỏng trạng thái cấp phát. Các bước kiểm tra và đường khai thác phụ thuộc vào phiên bản glibc, loại bin, kích thước chunk và các cơ chế giảm thiểu.
 
-Quản lý các chunk có kích thước nhỏ (mặc định tối đa 128 bytes trên 64-bit, 64 bytes trên 32-bit).
+Mẫu cơ bản trên fastbin (các phiên bản cũ) là `free(a); free(b); free(a)`: fastbin chỉ loại bỏ bản trùng ở **đầu danh sách**, nên các lần free xen kẽ vẫn thỏa mãn kiểm tra. Đây không phải bypass tổng quát — tcache có cơ chế phát hiện trùng riêng (2.29+) và safe-linking (2.32+) bảo vệ con trỏ.
 
-Sử dụng danh sách liên kết đơn (LIFO). Các chunk trong fastbin không bị gộp (coalesce) ngay lập tức kể cả khi nằm cạnh nhau, giúp tăng tốc độ tái cấp phát.
+**Hệ quả:** lần `malloc()` kế tiếp có thể trả về chính vùng nhớ đã bị free hai lần → hai con trỏ cùng trỏ một vùng nhớ. Một con trỏ có thể dùng để ghi đè dữ liệu/metadata trong khi con trỏ kia vẫn được chương trình tin cậy sử dụng, dẫn tới giả mạo con trỏ, ghi dữ liệu tuỳ ý và chiếm luồng thực thi.
 
-### Unsorted bin
+### 5.1 Điều kiện phát sinh
 
-Danh sách liên kết đôi (FIFO).
-
-Khi một chunk bị free (và không rơi vào tcache hay fastbins), nó được tạm đưa vào Unsorted bin. Tại lần gọi `malloc()` tiếp theo, allocator sẽ duyệt qua Unsorted bin để tìm chunk phù hợp, đồng thời phân loại các chunk chưa dùng về đúng Smallbins hoặc Largebins.
-
-### Smallbins
-
-Quản lý các chunk có kích thước nhỏ hơn 512 bytes (32-bit) hoặc 1024 bytes (64-bit).
-
-Danh sách liên kết đôi (FIFO). Tất cả các chunk trong cùng một Smallbin có kích thước hoàn toàn bằng nhau.
-
-### Large bins
-
-Quản lý các chunk có kích thước từ 1024 bytes trở lên (64-bit).
-
-Các chunk trong cùng một Largebin có thể có kích thước khác nhau (nằm trong một khoảng nhất định) và được sắp xếp theo thứ tự kích thước giảm dần để tối ưu cho thuật toán Best-Fit.
-
-## Double free
-
-Đầu tiên, cần biết bản chất lỗ hổng này xuất phát từ đâu:
-
-Giải phóng bộ nhớ nhiều hơn một lần là hành vi không xác định (undefined behavior) và có thể làm hỏng trạng thái cấp phát. Trong glibc (thư viện GNU-C định nghĩa các API tiêu chuẩn, bọc syscall, quản lý bộ nhớ, khởi chạy/kết thúc tiến trình, đa luồng POSIX, sockets...), các bước kiểm tra và đường khai thác phụ thuộc vào phiên bản glibc, bin, chunk size và các cơ chế giảm thiểu rủi ro. Mẫu fastbin dup (duplication) cơ bản là `free(a); free(b); free(a)`: Fastbin ở các phiên bản cũ chỉ kiểm tra và loại bỏ bản trùng ở đầu danh sách, nên các lần `free` xen kẽ vẫn có thể thỏa mãn các bước kiểm tra. Đây không phải là cách bypass tổng quát — tcache có cơ chế phát hiện trùng lặp riêng, và các bản glibc mới còn dùng safe-linking cho singly linked list.
-
-Bây giờ, khi bạn yêu cầu một vùng nhớ mới thông qua malloc, bộ cấp phát có thể trả về chính vùng nhớ đã được giải phóng hai lần. Điều này dẫn đến hai con trỏ cùng trỏ về một vùng nhớ. Nếu attacker kiểm soát được một trong hai con trỏ thì coi như kiểm soát cả vùng nhớ đó, dẫn tới nhiều hệ lụy như chèn malware hoặc thực thi shellcode.
-
-### Điều kiện phát sinh
-
-- **Cốt lõi:** `free()` được gọi hai lần lên cùng một địa chỉ, và giữa hai lần đó vùng nhớ không được cấp phát lại — tức con trỏ không bị set NULL sau `free()`, hoặc có hai con trỏ alias cùng trỏ về một vùng nhớ.
+- **Cốt lõi:** `free()` được gọi hai lần lên cùng một địa chỉ và giữa hai lần đó vùng nhớ không được cấp phát lại — tức con trỏ không được đặt về `NULL` sau `free()`, hoặc có hai con trỏ alias cùng trỏ một vùng nhớ.
 - **Các mẫu code điển hình:**
   - hai con trỏ alias: `p = q = malloc(...); free(p); free(q);`
   - nhánh xử lý lỗi đã `free()`, rồi nhánh cleanup chung `free()` lại
   - copy nông (shallow copy) struct/object chứa con trỏ
-  - `free()` xong không NULL hóa → destructor/cleanup gọi lần hai
+  - `free()` xong không `NULL` hóa → destructor/cleanup gọi lần hai
   - use-after-free (CWE-416) dẫn tới `free()` lần nữa
-  - `realloc` hỏng rồi `free()` cả con trỏ cũ lẫn mới
+  - `realloc()` hỏng rồi `free()` cả con trỏ cũ lẫn mới
   - đa luồng: hai thread cùng `free()` một object, hoặc sai refcount
-- **Lọt qua allocator:** không phải mọi lần free trùng đều bị chặn — phụ thuộc phiên bản glibc (bảng bên dưới).
+- **Lọt qua allocator hay không:** không phải mọi lần free trùng đều bị chặn — phụ thuộc phiên bản glibc (mục 5.3).
 - **Nguyên nhân gốc:** quyền sở hữu vùng nhớ không rõ ràng hoặc không được quản lý tại một chỗ duy nhất.
 
-**Free trùng có lọt qua allocator hay không, theo phiên bản glibc:**
+### 5.2 CWE liên quan
 
-| glibc | Kiểm tra của allocator | Hành vi free trùng | OS tiêu biểu |
+| Mã | Tên | Liên hệ |
+| --- | --- | --- |
+| **CWE-415** | Double Free | Gọi `free()` hai lần lên cùng một địa chỉ — lỗ hổng trung tâm của seminar |
+| CWE-416 | Use After Free | Thường là tiền đề hoặc hệ quả: dùng con trỏ sau khi free rồi free lại; bản thân double free cũng tạo ra UAF (hai con trỏ cùng trỏ một vùng nhớ) |
+
+### 5.3 Free trùng có lọt qua allocator?
+
+| glibc | Kiểm tra của allocator | Hành vi free trùng | Bản phân phối tiêu biểu |
 | --- | --- | --- | --- |
-| ≤ 2.25 | Chưa có tcache; fastbin chỉ so phần tử đầu danh sách | Lọt nếu free xen kẽ: `free(a); free(b); free(a)` | CentOS 7 (2.17), Ubuntu 16.04 (2.23), Debian 9 (2.24) |
-| 2.26 – 2.28 | Có tcache nhưng chưa kiểm tra trùng lặp | `free(a); free(a)` lọt ngay (tcache dup) | Ubuntu 18.04 (2.27), RHEL 8 (2.28), Debian 10 (2.28) |
-| 2.29 – 2.31 | tcache kiểm tra `key` + duyệt list | Phải ghi đè `key` (qua UAF) hoặc lấp đầy tcache bin cho chunk rơi xuống fastbin, rồi free xen kẽ | Ubuntu 20.04 (2.31), Debian 11 (2.31) |
-| ≥ 2.32 | Thêm safe-linking cho `fd` của fastbin/tcache | Vẫn lọt như trên, nhưng giả mạo `fd` cần heap leak | RHEL 9 (2.34), Ubuntu 22.04 (2.35), Debian 12 (2.36), Ubuntu 24.04 (2.39) |
+| ≤ 2.25 | chưa có tcache; fastbin chỉ so phần tử đầu danh sách | Lọt nếu free xen kẽ: `free(a); free(b); free(a)` | CentOS 7 (2.17), Ubuntu 16.04 (2.23), Debian 9 (2.24) |
+| 2.26 – 2.28 | có tcache nhưng chưa kiểm tra trùng lặp | `free(a); free(a)` lọt ngay (tcache dup) | Ubuntu 18.04 (2.27), RHEL 8 (2.28), Debian 10 (2.28) |
+| 2.29 – 2.31 | tcache kiểm tra `key` + duyệt danh sách | Phải ghi đè `key` (qua UAF) hoặc lấp đầy tcache bin để chunk rơi xuống fastbin, rồi free xen kẽ | Ubuntu 20.04 (2.31), Debian 11 (2.31) |
+| ≥ 2.32 | thêm safe-linking cho con trỏ `next` của tcache/fastbin | Vẫn lọt như trên, nhưng giả mạo `next` cần heap leak | RHEL 9 (2.34), Ubuntu 22.04 (2.35), Debian 12 (2.36), Ubuntu 24.04 (2.39) |
+| ≥ 2.42 | tcache mở rộng: `glibc.malloc.tcache_max` có thể tăng tới 4 MiB | Giả định "chunk > `0x410` là vào unsorted bin" không còn luôn đúng | Ubuntu 25.10+, Fedora 43+ (2.42) |
 
 Ghi chú:
 
-- tcache có từ glibc 2.26: mỗi bin giữ tối đa 7 chunk (chunk ≤ `0x410`), tắt được bằng `GLIBC_TUNABLES=glibc.malloc.tcache_count=0`.
-- Safe-linking chỉ mã hóa/kiểm tra con trỏ `fd`, **không** chặn double free.
-- Chunk trong ví dụ bên dưới (`BUFSIZE2 = 248` → chunk `0x100`) nằm trong tcache (glibc ≥ 2.26), không phải fastbin (fastbin 64-bit chỉ tới `0x80`).
+- tcache có từ glibc 2.26, áp dụng cho chunk ≤ `0x410`, mỗi bin tối đa 7 chunk; tắt bằng `GLIBC_TUNABLES=glibc.malloc.tcache_count=0`.
+- Safe-linking chỉ mã hóa con trỏ `next` (`fd`), **không** chặn double free.
+- Thông báo abort điển hình: `double free or corruption (fasttop)` (fastbin) và `free(): double free detected in tcache 2` (tcache, 2.29+).
+- Chunk trong ví dụ bên dưới (`BUFSIZE2 = 248` → chunk `0x100`) thuộc tcache, không phải fastbin (`0x100 > 0x80`) → đây là kịch bản **tcache dup** trên glibc 2.26–2.28.
 
-Ví dụ:
+### 5.4 Ví dụ minh họa
 
 ```c
 #include <stdio.h>
@@ -197,56 +173,208 @@ Ví dụ:
 #include <string.h>
 
 #define BUFSIZE1    512
-#define BUFSIZE2    ((BUFSIZE1/2) - 8)
+#define BUFSIZE2    ((BUFSIZE1 / 2) - 8)   /* = 248 → chunk 0x100 → thuộc tcache */
 
 int main(int argc, char **argv) {
-  char *i;
-  char *h;
-  char *j;
+  char *i = (char *) malloc(BUFSIZE2);
+  char *h = (char *) malloc(BUFSIZE2);
 
-  i = (char *) malloc(BUFSIZE2);
-  h = (char *) malloc(BUFSIZE2);
+  free(i);    /* tcache[0x100] = i      */
+  free(h);    /* tcache[0x100]: h → i   */
 
-  free(i);
-  free(h);
+  char *j = (char *) malloc(BUFSIZE1);   /* chunk 0x210, lấy từ top;
+                                            không đụng tới tcache bin 0x100 */
+  strncpy(j, argv[1], BUFSIZE1 - 1);
 
-  j = (char *) malloc(BUFSIZE1);
-  strncpy(j, argv[1], BUFSIZE1-1);
-
-  free(h);
-  free(j);
+  free(h);    /* 2.26–2.28: không kiểm tra → h->next = h (self-loop) */
+  free(j);    /* vào tcache bin khác */
 }
 ```
 
-Trước tiên, `free(i)` và `free(h)` giải phóng hai chunk kích thước `BUFSIZE2` (< `BUFSIZE1`). Tiếp theo, `malloc(BUFSIZE1)` cấp phát `j`: vì `BUFSIZE1` lớn hơn hẳn nên `j` được lấy ở vùng khác (top chunk hoặc unsorted bin), hai chunk trong free list vẫn còn nguyên. Sau đó, `free(h)` lần thứ hai không bị phát hiện, khiến free list bị lặp — cùng một chunk xuất hiện hai lần:
+Phân tích (trên glibc **2.26–2.28** — giai đoạn tcache chưa kiểm tra trùng lặp):
 
+1. `free(i)`, `free(h)`: hai chunk `0x100` vào tcache theo LIFO → danh sách `h → i`.
+2. `malloc(512)` (cỡ `0x210`, khác size class): `j` được cắt từ top chunk; hai chunk trong tcache vẫn nguyên.
+3. `free(h)` lần thứ hai: không có kiểm tra double free → `h` lại được đưa vào đầu bin; vì đầu bin đang là `h`, `h->next` trỏ về chính nó → danh sách thành `h → h` (self-loop), chunk `i` bị mất khỏi danh sách.
+4. Các lần `malloc(248)` tiếp theo đều trả về `h` → hai (hay nhiều) con trỏ "hợp lệ" cùng trỏ một vùng nhớ — mảnh đất cho tcache poisoning/UAF.
+
+Trên các phiên bản khác:
+
+- **glibc ≤ 2.25** (chưa có tcache): hai chunk `0x100` rơi vào unsorted bin và hợp nhất với nhau/top, nên sau `malloc(512)` thì `h` nằm giữa vùng dữ liệu của `j`; `free(h)` lần hai đọc metadata rác và thường abort. Muốn minh họa trên các bản này, dùng mẫu fastbin dup với chunk ≤ `0x80`.
+- **glibc ≥ 2.29**: `free(h)` lần hai bị chặn ngay → `free(): double free detected in tcache 2`.
+
+## 6. Tcache poisoning
+
+Từ glibc 2.29, tcache phát hiện được cả `free(a); free(a)` trực tiếp (nhờ trường `key` + duyệt danh sách), nên muốn `malloc()` trả về một địa chỉ tự chọn, ta thường dùng **tcache poisoning**: làm hỏng con trỏ `next` của một chunk đã free để điều hướng lần cấp phát kế tiếp.
+
+### 6.1 Ràng buộc trên glibc hiện đại
+
+| Phiên bản | Cơ chế | Ảnh hưởng tới kỹ thuật |
+| --- | --- | --- |
+| 2.29+ | phát hiện double free qua trường `key` | free trùng trực tiếp bị abort; phải ghi đè `key` (qua UAF) hoặc đẩy chunk xuống fastbin |
+| 2.32+ | safe-linking cho `next` của tcache/fastbin | muốn giả mạo `next` phải có heap leak để tính giá trị mã hóa |
+| 2.34+ | bỏ `__malloc_hook` / `__free_hook` | kỹ thuật ghi đè hook chỉ còn dùng cho target glibc cũ, không áp dụng cho bản mới |
+| các bản mới | kiểm tra căn chỉnh chunk trả về | con trỏ sai căn chỉnh → `malloc(): unaligned tcache chunk detected` |
+
+Safe-linking mã hóa con trỏ `next` theo công thức:
+
+```text
+stored_next = target ^ (address_of_next_field >> 12)
 ```
-h → i → h
-```
 
-## Tcache poisoning
+Mặt nạ XOR được sinh từ **địa chỉ ô nhớ lưu con trỏ**, nên nếu chưa biết địa chỉ heap thì không thể tạo ra `next` giả hợp lệ.
 
-Như đã đề cập ở phần trước, với bản patch mới của tcache, ta không thể dùng cách đơn thuần (free xen kẽ) để thực hiện double free attack. Ở phần này mình sẽ giới thiệu hướng mới để bypass vấn đề trên.
+### 6.2 Mục tiêu thực tế của kỹ thuật
 
-Một freed tcache chunk được dùng lại tại một `tcache_entry`:
+- Trả về chunk chồng lên một **object khác trên heap** → đọc/ghi tùy ý.
+- Trả về chunk chồng lên **cấu trúc toàn cục/ứng dụng** → ghi đè con trỏ mà chương trình dùng về sau.
+- Trả về chunk chồng lên cấu trúc dùng cho **FSOP/ROP** → ghi đè để chiếm luồng thực thi.
+
+### 6.3 tcache_entry — vùng dữ liệu bị lợi dụng
 
 ```c
 struct tcache_entry {
-    struct tcache_entry *next;
-    uintptr_t key;
+    struct tcache_entry *next;   /* qword đầu tiên của user data */
+    uintptr_t key;               /* qword thứ hai (2.29+)         */
 };
 ```
 
-Dễ thấy mỗi lần free xong, qword đầu tiên của dữ liệu người dùng sẽ trở thành con trỏ của singly linked list (sll) và qword sau được dùng làm double free check. Nếu lỗ hổng cho phép chúng ta ghi đè lên 1 trong 2, thường biến thành:
+Sau mỗi lần `free()`, qword đầu tiên của user data trở thành con trỏ của danh sách liên kết đơn, qword thứ hai là `key` dùng cho kiểm tra double free. Nếu lỗ hổng cho phép ghi đè một trong hai:
 
-- Arbitrary allocation bằng cách làm hỏng `next`.
-- Double-free bypass bằng cách làm hỏng `key` ← trọng tâm phần seminar của chúng ta.
+- hỏng `next` → **arbitrary allocation** (cấp phát tại địa chỉ tự chọn);
+- hỏng `key` → **bypass double-free detection** ← trọng tâm phần seminar của chúng ta.
+
+### 6.4 Quy trình poisoning cơ bản
+
+1. Có primitive cho phép chỉnh sửa một chunk đã bị free (UAF/overflow).
+2. `free()` một chunk cùng size class với mục tiêu.
+3. Nếu safe-linking được bật: leak (hoặc suy luận) địa chỉ heap của chunk đã free.
+4. Ghi đè `next` bằng giá trị đã mã hóa của địa chỉ đích.
+5. `malloc()` một lần để tiêu thụ entry bị hỏng.
+6. `malloc()` lần nữa để nhận chunk tại địa chỉ đã chọn.
+
+Với glibc 2.32+, giá trị cần ghi:
+
+```c
+fake_next = target ^ (address_of_victim_next_field >> 12)
+```
+
+Nếu `target` không phù hợp với kỳ vọng của allocator (ví dụ sai căn chỉnh), `malloc()` sẽ abort trước khi ta chạm tới dữ liệu.
+
+### 6.5 Tcache index & tcache metadata attack
+
+Đầu vùng nhớ heap (theo mặc định trên các bản glibc cũ) là cấu trúc `tcache_perthread_struct`: `counts[]` (số chunk mỗi index) và `entries[]` (đầu danh sách mỗi index). Nếu ghi được vào cấu trúc này, ta điều khiển được **cả lớp kích thước cùng lúc** thay vì một chunk đơn lẻ:
+
+- sửa `entries[idx]` → mọi `malloc()` cùng size class sau đó trả về địa chỉ do ta chọn;
+- sửa `counts[idx]` → lừa glibc tin rằng bin còn chunk dù thực tế không có.
+
+Các biến thể hiện đại đáng chú ý:
+
+- **House of Water** — biến lỗi UAF/tràn thành quyền kiểm soát `tcache_perthread_struct`; là hướng giải quyết hiện đại khi safe-linking khiến việc làm hỏng free list trực tiếp trở nên khó khăn.
+- **Safe-link double protect** — lợi dụng các đường cấp phát "bảo vệ lại" một giá trị đã được bảo vệ; kỹ thuật sắp xếp vị trí các con trỏ sao cho các mặt nạ XOR triệt tiêu hoặc biến đổi thành giá trị cần thiết. Lưu ý: XOR hai lần một con trỏ đã được bảo vệ là **chưa đủ**, vì `PROTECT_PTR` sinh mặt nạ từ địa chỉ lưu trữ.
+- **Tcache relative write** — nếu làm hỏng được tham số như `mp_.tcache_bins`, glibc có thể tính ra `tc_idx` vượt phạm vi và ghi metadata tcache **ngoài** vùng heap dự kiến.
+- **glibc 2.42 metadata hijacking** — how2heap ghi nhận `tcache_perthread_struct` có thể được khởi tạo **muộn hơn** (không còn luôn là cấp phát heap đầu tiên) nếu hoạt động heap đầu tiên dùng chunk lớn không chạm tcache; khi đó lỗi tràn/UAF trên chunk lớn phía trước có thể ghi trực tiếp vào `entries[]`, khiến `malloc()` nhỏ kế tiếp trả về địa chỉ do kẻ tấn công chọn.
+
+### 6.6 Một số biến thể hiện đại khác
+
+#### House of Botcake
+
+Giải pháp tiêu chuẩn khi tcache dup cũ không còn hiệu quả: dùng **consolidation với unsorted bin** để chunk mục tiêu vừa nằm trong tcache vừa là một phần của vùng nhớ đã free lớn hơn; sau khi giành lại quyền ghi vào vùng chồng lấn, ta poisoning entry tcache như bình thường.
+
+Phù hợp khi: kích hoạt được consolidation; double free bị tcache chặn; đủ quyền kiểm soát heap để khôi phục chunk mục tiêu và ghi lại `next` đã mã hóa.
+
+#### Tcache stashing unlink attack
+
+Không ghi đè `next` trực tiếp mà lợi dụng đường glibc chuyển chunk từ **smallbin vào tcache**: nếu làm hỏng metadata smallbin (thường là `bk`) trước khi chuyển, glibc có thể **stash một chunk giả vào tcache**, sau đó một `malloc()` bình thường sẽ trả về nó.
+
+#### Bypass safe-linking
+
+Trên glibc 2.32+, câu hỏi không còn là "ghi đè `next` thế nào?" mà là "tạo con trỏ protected hợp lệ thế nào?":
+
+- leak heap bằng cách đọc/in một chunk tcache đã free;
+- dùng overlap/UAF để khôi phục heap base rồi mã hóa con trỏ theo công thức;
+- lợi dụng primitive "bảo vệ hai lần" hoặc ghi vào metadata tcache thay vì một entry;
+- đọc lại con trỏ bị mã hóa từ chunk đã free và dùng helper như `decrypt_safe_linking` để khôi phục địa chỉ thật trước khi giả mạo `next`.
+
+## 7. CVE thực tế (2025–2026)
+
+Tổng quan các CVE double free (CWE-415) nghiêm trọng, đã bị khai thác thực tế trong giai đoạn 2025–2026:
+
+| Năm | CVE | Sản phẩm | Chuỗi | CVSS | Trạng thái khai thác |
+| --- | --- | --- | --- | --- | --- |
+| 2026 | CVE-2026-33824 | Windows IKE Extension (`ikeext.dll`) | double free → RCE từ xa không xác thực | **9.8 – Critical** | Đã khai thác thực tế (CISA KEV 18/8/2026) |
+| 2026 | CVE-2026-23918 | Apache HTTP Server 2.4.66 (`mod_http2`) | double free → DoS/RCE | 8.8 – High | Đã khai thác DoS thực tế |
+| 2025 | CVE-2025-62215 | Windows Kernel | race condition → double free → EoP | 7.0 – High | Đã khai thác thực tế (CISA KEV 12/11/2025) |
+
+### 7.1 CVE-2026-33824 — Windows IKE Extension (2026, đại diện Critical)
+
+| Trường | Nội dung |
+| --- | --- |
+| **Sản phẩm bị ảnh hưởng** | Windows IKE Extension (`ikeext.dll` — dịch vụ IKEEXT, nền tảng Windows IPsec/IKEv2 VPN): Windows 10/11 và Windows Server 2016–2025 chưa vá |
+| **Phân loại** | CWE-415 Double Free; CVSS 3.1 = **9.8 Critical** (`AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H`) |
+| **Nguyên nhân** | Trong quá trình lắp ghép (reassembly) thông điệp IKEv2 `IKE_AUTH` bị phân mảnh, con trỏ tới blob "Security Realm" (thuộc cấu trúc MMSA) bị **sao chép nông** (shallow copy) sang PacketContext; cả hai ngữ cảnh đều giải phóng cùng một vùng heap → double free (phân tích của TrendAI/ZDI) |
+| **Tác động** | Crash dịch vụ IKEEXT hoặc **thực thi mã tuỳ ý trong context SYSTEM** của dịch vụ; RCE từ xa không xác thực, không tương tác người dùng → được xếp loại "wormable" |
+| **Điều kiện khai thác** | Chỉ cần gửi IKE/IKEv2 tới UDP 500/4500: một `IKE_SA_INIT` có Security Realm Vendor ID, sau đó các fragment `IKE_AUTH` (RFC 7383) → chạm đường xử lý lỗi **trước khi peer được xác thực**; không cần tài khoản VPN, không cần VA |
+| **Biện pháp khắc phục** | Cập nhật bản vá Microsoft tháng 4/2026 (hoặc mới hơn); nếu chưa vá: chặn UDP 500/4500 với host không cần IKE, giới hạn peer tin cậy, không expose VPN/IPsec trực tiếp ra Internet khi không cần thiết |
+| **Liên hệ chuỗi khai thác** | Đúng mô hình của seminar: double free → heap corruption → tái sử dụng vùng đã free → kiểm soát object/con trỏ → thực thi mã trong context dịch vụ đặc quyền |
+
+### 7.2 CVE-2026-23918 — Apache HTTP Server, double free trong mod_http2 (2026)
+
+| Trường | Nội dung |
+| --- | --- |
+| **Sản phẩm bị ảnh hưởng** | Apache HTTP Server **2.4.66** (`mod_http2`, MPM đa luồng: worker/event; prefork không bị ảnh hưởng) |
+| **Phân loại** | CWE-415 Double Free; CVSS 8.8 (High) |
+| **Nguyên nhân** | Client gửi HEADERS rồi RST_STREAM (mã lỗi khác 0) trên cùng một stream trước khi multiplexer đăng ký stream: hai callback của nghttp2 (`on_frame_recv_cb` và `on_stream_close_cb`) đều gọi `h2_mplx_c1_client_rst` → `m_stream_cleanup` đẩy cùng con trỏ `h2_stream` vào mảng cleanup hai lần → `h2_stream_destroy` free lần hai (`h2_mplx.c`) |
+| **Tác động** | DoS từ xa tầm thường (1 kết nối TCP, 2 frame, không cần xác thực); RCE khi APR dùng mmap allocator (mặc định trên Debian/Ubuntu và Docker chính thức): đặt fake `h2_stream` vào vùng vừa free, trỏ con trỏ hàm cleanup của pool tới `system()`, dùng scoreboard (địa chỉ cố định) chứa payload |
+| **Điều kiện khai thác** | HTTP/2 bật + MPM đa luồng; RCE cần thêm info leak và heap spray (đã được chứng minh trong phòng lab) |
+| **Biện pháp khắc phục** | Nâng lên 2.4.67; tạm thời tắt `mod_http2`; chỉ 2.4.66 bị ảnh hưởng (2.4.65 và 2.4.67 trở đi an toàn) |
+
+### 7.3 CVE-2025-62215 — Windows Kernel, race condition dẫn tới double free (2025)
+
+| Trường | Nội dung |
+| --- | --- |
+| **Sản phẩm bị ảnh hưởng** | Windows Kernel (Windows 10/11, Windows Server 2019–2025 chưa vá) |
+| **Phân loại** | CWE-362 (race condition) + CWE-415 (double free); CVSS 3.1 = 7.0 (High) |
+| **Nguyên nhân** | Đồng bộ sai tài nguyên dùng chung trong kernel (race condition) cho phép cùng một đối tượng kernel bị giải phóng hai lần |
+| **Tác động** | Leo thang đặc quyền cục bộ lên **SYSTEM**; đã bị khai thác thực tế dưới dạng zero-day |
+| **Điều kiện khai thác** | Người dùng cục bộ có quyền thấp; cần thắng race (thử lặp nhiều lần) |
+| **Biện pháp khắc phục** | Cập nhật bản vá Patch Tuesday tháng 11/2025 của Microsoft; theo dõi CISA KEV |
+
+Điểm chung của cả ba CVE: vùng nhớ (hoặc đối tượng) bị giải phóng hai lần → allocator phân phối lại cùng vùng nhớ cho hai mục đích khác nhau → kẻ tấn công ghi đè cấu trúc/con trỏ → chiếm quyền thực thi. Đây chính là "chuỗi khai thác" mà seminar minh họa trên userland (glibc): **double free → alias hai con trỏ → poisoning → ghi tuỳ ý → chiếm luồng thực thi**.
+
+## 8. Thuật ngữ nhanh
+
+| Thuật ngữ | Giải thích |
+| --- | --- |
+| chunk | Đơn vị cấp phát của glibc malloc: header (`prev_size`, `size`) + user data |
+| arena | Vùng quản lý heap của glibc; main arena dùng chung, thread có thể có arena phụ |
+| top chunk | Phần heap chưa cấp phát còn lại ở cuối heap |
+| consolidation | Gộp các chunk rảnh kề nhau (hoặc với top) khi free |
+| tcache_perthread_struct | Cấu trúc metadata tcache của mỗi thread (`counts[]`, `entries[]`), thường nằm đầu heap |
+| safe-linking | Cơ chế (2.32+) mã hóa con trỏ `next` của tcache/fastbin: `stored = ptr ^ (pos >> 12)` |
+| PROTECT_PTR / REVEAL_PTR | Macro mã hóa / giải mã con trỏ của safe-linking |
+| heap leak | Rò rỉ địa chỉ heap/libc (qua read/in dữ liệu chunk) |
+| tcache poisoning | Ghi đè `next` trong chunk đã free để điều hướng `malloc()` |
+| arbitrary allocation | Khiến `malloc()` trả về chunk tại địa chỉ tuỳ ý |
+| FSOP | File-Stream Oriented Programming — lợi dụng cấu trúc `FILE`/`_IO_*` để chiếm luồng thực thi |
+| use-after-free (UAF) | Dùng con trỏ sau khi vùng nhớ đã bị free |
 
 ## Tài liệu tham khảo
 
-- Blog cá nhân — Learning Malware for Beginner (Part 1): https://nhan-laptop.github.io/posts/malware-binary/learning-Malware-for-beginner-part-1.html
-- HackTricks — Double free: https://hacktricks.wiki/en/binary-exploitation/libc-heap/double-free.html
-- OWASP — Doubly freeing memory: https://community.owasp.org/vulnerabilities/Doubly_freeing_memory
-- HackTricks — Bins & memory allocations: https://hacktricks.wiki/en/binary-exploitation/libc-heap/bins-and-memory-allocations.html#bins--memory-allocations
-- GeeksforGeeks — Memory Management in Operating System: https://www.geeksforgeeks.org/operating-systems/memory-management-in-operating-system/
-- HackTricks — Tcache bin attack: https://hacktricks.wiki/en/binary-exploitation/libc-heap/tcache-bin-attack.html
+- Blog cá nhân — [Malware for Beginners (Phần 1: Stack, heap và calling conventions)](https://nhan-laptop.github.io/posts/malware-binary/learning-Malware-for-beginner-part-1.html)
+- HackTricks — [Double free](https://hacktricks.wiki/en/binary-exploitation/libc-heap/double-free.html)
+- HackTricks — [Bins & memory allocations](https://hacktricks.wiki/en/binary-exploitation/libc-heap/bins-and-memory-allocations.html)
+- HackTricks — [Tcache bin attack](https://hacktricks.wiki/en/binary-exploitation/libc-heap/tcache-bin-attack.html)
+- OWASP — [Doubly freeing memory](https://owasp.org/www-community/vulnerabilities/Doubly_freeing_memory)
+- GeeksforGeeks — [Memory Management in Operating System](https://www.geeksforgeeks.org/operating-systems/memory-management-in-operating-system/)
+- how2heap (shellphish) — [Bộ PoC các kỹ thuật heap exploitation](https://github.com/shellphish/how2heap)
+- glibc Wiki — [MallocInternals](https://sourceware.org/glibc/wiki/MallocInternals)
+- Check Point Research — [Safe-Linking: eliminating a 20-year-old malloc() exploit primitive](https://research.checkpoint.com/2020/safe-linking-eliminating-a-20-year-old-malloc-exploit-primitive/)
+- corgi.rip — [Leakless Heap Exploitation — The House of Water](https://corgi.rip/posts/leakless_heap_1/)
+- MITRE — [CWE-415: Double Free](https://cwe.mitre.org/data/definitions/415.html), [CWE-416: Use After Free](https://cwe.mitre.org/data/definitions/416.html)
+- NVD — [CVE-2026-33824](https://nvd.nist.gov/vuln/detail/CVE-2026-33824), [CVE-2026-23918](https://nvd.nist.gov/vuln/detail/CVE-2026-23918), [CVE-2025-62215](https://nvd.nist.gov/vuln/detail/CVE-2025-62215)
+- Microsoft MSRC — [CVE-2026-33824](https://msrc.microsoft.com/update-guide/vulnerability/CVE-2026-33824)
+- Zero Day Initiative (TrendAI) — [CVE-2026-33824: Remote Code Execution in Windows IKEv2](https://www.thezdi.com/blog/2026/4/22/cve-2026-33824-remote-code-execution-in-windows-ikev2)
+- Apache Software Foundation — [Apache HTTP Server 2.4 vulnerabilities](https://httpd.apache.org/security/vulnerabilities_24.html)
+- Rescana — [Phân tích CVE-2026-23918](https://www.rescana.com/post/critical-apache-http-server-2-4-66-vulnerability-cve-2026-23918-http-2-mod-http2-double-free-enables-dos-and-remote-code)
+- CISA — [Known Exploited Vulnerabilities Catalog](https://www.cisa.gov/known-exploited-vulnerabilities-catalog)
