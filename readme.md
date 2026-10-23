@@ -44,6 +44,8 @@ Heap là vùng nhớ lớn dùng cho cấp phát động, chứa dữ liệu mà
 
 ## 2. Quản lý bộ nhớ trong hệ điều hành
 
+Stack và heap ở mục 1 là hai vùng trong **không gian địa chỉ ảo** (virtual address space) mà một tiến trình nhìn thấy — con trỏ trong chương trình luôn là địa chỉ ảo, không phải địa chỉ RAM vật lý. Mục này lùi một bước xuống tầng hệ điều hành để trả lời: ai tạo ra ảo giác "mỗi tiến trình có cả một không gian nhớ liên tục riêng", và vì sao cơ chế đó (virtual memory) lại là tiền đề cho ASLR — cơ chế sẽ quay lại ở mục 7 khi nói về giới hạn khai thác.
+
 Quản lý bộ nhớ là quá trình kiểm soát và tổ chức bộ nhớ thông qua phân bổ các khối cho các chương trình thực thi, nhằm cải thiện hiệu suất tổng thể.
 
 ![Phân cấp bộ nhớ: registers, cache, main memory, đĩa, băng từ](image.png)
@@ -62,13 +64,13 @@ Các kỹ thuật được dùng:
 
 ### 2.2 Cơ chế quản lý bộ nhớ
 
-- **Virtual memory**: cấp cho mỗi tiến trình một không gian địa chỉ ảo riêng, ánh xạ tới RAM và swap — nhờ đó chương trình lớn hơn RAM vẫn chạy được.
+- **Virtual memory**: cấp cho mỗi tiến trình một không gian địa chỉ ảo riêng, ánh xạ tới RAM và swap — nhờ đó chương trình lớn hơn RAM vẫn chạy được. Đây là khái niệm quan trọng nhất của mục 2 đối với seminar: **ASLR** (mục 7) hoạt động bằng cách random hoá vị trí ánh xạ này, khiến attacker không biết trước địa chỉ heap/libc thật — paging (2.1) và PRA (dưới đây) là cơ chế nền, không được dùng lại trực tiếp ở các mục sau.
 - **Page Replacement Algorithms (PRA)**: xác định trang nào bị đưa ra khỏi bộ nhớ khi bộ nhớ đầy.
 - **Demand Paging**: chỉ nạp trang khi tiến trình thực sự cần — giảm bộ nhớ và I/O không cần thiết.
 
 ## 3. Dữ liệu trên heap được lưu thế nào?
 
-Trên Linux/Unix, khi tiến trình cấp phát động bằng `malloc()`, `calloc()` hay `realloc()`, bộ cấp phát (mặc định là `ptmalloc` trong `glibc`) không lưu thuần dữ liệu người dùng mà đóng gói thành các **heap chunk** gồm metadata + user data.
+Ranh giới cần tách rõ trước khi vào chi tiết: mục 2 là việc **OS** cấp *vùng* địa chỉ ảo cho tiến trình (qua `brk()` để mở rộng heap liền mạch, hoặc `mmap()` để cấp vùng lớn riêng) — OS không biết gì về `malloc()`/`free()` hay "chunk". Việc chia nhỏ vùng đó ra cho từng lời gọi `malloc()` là công việc của một thư viện chạy trong **user-space**, nằm hoàn toàn trong tiến trình, không có đặc quyền kernel. Trên Linux/Unix, khi tiến trình cấp phát động bằng `malloc()`, `calloc()` hay `realloc()`, bộ cấp phát (mặc định là `ptmalloc` trong `glibc`) không lưu thuần dữ liệu người dùng mà đóng gói thành các **heap chunk** gồm metadata + user data.
 
 ### 3.1 Cấu trúc một chunk
 
@@ -121,7 +123,7 @@ Ghi chú:
 
 ## 5. Double free
 
-**Bản chất:** `free()` được gọi nhiều hơn một lần trên cùng một vùng nhớ là hành vi không xác định (undefined behavior), làm hỏng trạng thái cấp phát. Các bước kiểm tra và đường khai thác phụ thuộc vào phiên bản glibc, loại bin, kích thước chunk và các cơ chế giảm thiểu.
+**Bản chất:** `free()` được gọi nhiều hơn một lần trên cùng một vùng nhớ là hành vi không xác định (undefined behavior). Hệ quả cụ thể là làm hỏng chính các danh sách bin vừa trình bày ở mục 4 — ví dụ một chunk bị chèn hai lần vào cùng một tcache/fastbin, phá vỡ tính đúng đắn của linked list mà allocator dùng để tái sử dụng chunk. Các bước kiểm tra và đường khai thác phụ thuộc vào phiên bản glibc, loại bin, kích thước chunk và các cơ chế giảm thiểu.
 
 Mẫu cơ bản trên fastbin (các phiên bản cũ) là `free(a); free(b); free(a)`: fastbin chỉ loại bỏ bản trùng ở **đầu danh sách**, nên các lần free xen kẽ vẫn thỏa mãn kiểm tra. Đây không phải bypass tổng quát — tcache có cơ chế phát hiện trùng riêng (2.29+) và safe-linking (2.32+) bảo vệ con trỏ.
 
@@ -205,7 +207,7 @@ Trên các phiên bản khác:
 
 ## 6. Tcache poisoning
 
-Từ glibc 2.29, tcache phát hiện được cả `free(a); free(a)` trực tiếp (nhờ trường `key` + duyệt danh sách), nên muốn `malloc()` trả về một địa chỉ tự chọn, ta thường dùng **tcache poisoning**: làm hỏng con trỏ `next` của một chunk đã free để điều hướng lần cấp phát kế tiếp.
+Ví dụ 5.4 kết thúc bằng một self-loop (`h → h`) — chính trạng thái đó là một dạng UAF: hai (hay nhiều) lần `malloc()` tiếp theo cùng trả về một vùng nhớ, cho attacker quyền ghi vào một chunk mà chương trình vẫn tin là "đã cấp phát hợp lệ". Đây chính là primitive mà kỹ thuật dưới đây khai thác tiếp — double free ở mục 5 không tự ghi đè được gì, nó chỉ *tạo ra* cơ hội ghi đè. Từ glibc 2.29, tcache phát hiện được cả `free(a); free(a)` trực tiếp (nhờ trường `key` + duyệt danh sách), nên muốn `malloc()` trả về một địa chỉ tự chọn, ta thường dùng **tcache poisoning**: làm hỏng con trỏ `next` của một chunk đã free để điều hướng lần cấp phát kế tiếp.
 
 ### 6.1 Ràng buộc trên glibc hiện đại
 
@@ -296,9 +298,43 @@ Trên glibc 2.32+, câu hỏi không còn là "ghi đè `next` thế nào?" mà 
 - lợi dụng primitive "bảo vệ hai lần" hoặc ghi vào metadata tcache thay vì một entry;
 - đọc lại con trỏ bị mã hóa từ chunk đã free và dùng helper như `decrypt_safe_linking` để khôi phục địa chỉ thật trước khi giả mạo `next`.
 
-## 7. CVE thực tế (2025–2026)
+## 7. Điều kiện, cơ chế bảo vệ và giới hạn khả năng khai thác
 
-Tổng quan các CVE double free (CWE-415) nghiêm trọng, đã bị khai thác thực tế trong giai đoạn 2025–2026:
+Double free bị allocator chặn (mục 5.3) không có nghĩa là hết đường khai thác — nó chỉ đẩy attacker sang tcache poisoning (mục 6). Nhưng tạo ra được chunk tại "địa chỉ tuỳ chọn" cũng không đồng nghĩa với chiếm được luồng thực thi: giữa hai điểm đó còn nhiều lớp bảo vệ độc lập với allocator. Phần này tách rõ ba câu hỏi: *cần gì để đi hết chuỗi khai thác*, *lớp nào đang chặn ở đâu*, và *tại sao vẫn có CVE thực tế* (mục 8).
+
+### 7.1 Điều kiện cần để chuỗi khai thác đi hết chặng đường
+
+Không phải cứ có double free là có RCE. Chuỗi `double free → UAF → tcache poisoning → ghi tuỳ ý → chiếm luồng thực thi` chỉ đi hết nếu đồng thời thoả:
+
+| Điều kiện | Vì sao cần |
+| --- | --- |
+| Chunk bị free và chunk mục tiêu cùng size class | tcache/fastbin không coalesce, mỗi bin chỉ phục vụ đúng một khoảng size (mục 4) |
+| Có primitive ghi vào chunk đã free (UAF hoặc overflow) | để sửa `next`/`key` của `tcache_entry` (mục 6.3) — double free chỉ *tạo ra* UAF, không tự ghi được gì |
+| Biết (hoặc leak được) địa chỉ heap, nếu glibc ≥ 2.32 | safe-linking mã hoá `next` theo địa chỉ lưu trữ (mục 6.1) — không có leak thì không tạo được giá trị mã hoá hợp lệ |
+| Kiểm soát được thứ tự `malloc()` kế tiếp | entry bị poison phải được tiêu thụ đúng lúc, không bị một `malloc()` khác cùng size class "chen ngang" |
+| Chunk tại địa chỉ đích overlap với structure có giá trị khai thác | con trỏ hàm, GOT entry, `FILE`/`_IO_*` (FSOP) — overlap với dữ liệu "trơ" thì chỉ dừng ở leak/corrupt, chưa có execution control |
+
+### 7.2 Cơ chế bảo vệ theo tầng
+
+| Tầng | Cơ chế | Chặn gì trong chuỗi | Giới hạn còn lại / cách lọt |
+| --- | --- | --- | --- |
+| Allocator (glibc) | tcache `key` (2.29+), safe-linking (2.32+), bỏ `__malloc_hook`/`__free_hook` (2.34+), kiểm tra alignment | Free trùng trực tiếp; giả mạo `next` không mã hoá; ghi đè hook để nhảy thực thi | Đã phân tích ở mục 6.1 — vẫn lọt nếu có leak heap hoặc overflow đủ lớn để tạo UAF khác |
+| OS / loader | **ASLR**: random hoá vị trí heap, libc, stack mỗi lần chạy | Không đoán được địa chỉ tuyệt đối để tính mask safe-linking hoặc trỏ tới hàm libc | Chỉ cần leak **một** địa chỉ (heap hoặc libc) là suy ra toàn bộ offset còn lại — ASLR không chặn, chỉ tăng chi phí |
+| OS / loader | **PIE**: code base của binary cũng bị randomize, không cố định như binary non-PIE | ROP gadget trong chính binary không còn ở địa chỉ tĩnh | Cần thêm info leak cho code base, tương tự ASLR libc |
+| CPU / OS | **NX/DEP**: trang stack/heap không được đánh dấu executable | Không thể nhảy thẳng vào shellcode ghi trên heap/stack | Buộc chuyển sang ROP hoặc FSOP (mục 6.2) — đổi hướng kỹ thuật, không chặn hoàn toàn |
+| Linker | **RELRO** (Partial/Full) | Full RELRO: GOT read-only sau khi resolve → chặn kỹ thuật ghi đè GOT entry cổ điển | Không ảnh hưởng hook overwrite (glibc < 2.34) hay FSOP — hai hướng này vẫn mở |
+| Compiler | **Stack canary**, `_FORTIFY_SOURCE` | Canary không liên quan trực tiếp tới heap; `_FORTIFY_SOURCE` có thể bắt một số overflow (vd `strcpy` tràn) trước khi nó kịp tạo UAF | Không bắt được lỗi logic thuần (free hai lần một con trỏ hợp lệ, không tràn buffer) |
+| Runtime / deploy | seccomp, sandbox, chạy service quyền thấp | Giới hạn syscall/tài nguyên **sau khi** đã chiếm luồng thực thi | Không ngăn khai thác heap, chỉ giảm tác động cuối (CVE-2026-33824 chạy trong context SYSTEM của dịch vụ — sandbox yếu không giảm được mức này) |
+
+Ghi chú: các lớp này **độc lập nhau theo thiết kế** (defense in depth) — attacker phải vượt qua gần hết cùng lúc chứ không chỉ một lớp, nhưng cũng chỉ cần một lớp bị cấu hình sai hoặc tắt (binary compile không PIE, service tắt ASLR để debug...) là giảm hẳn độ khó của toàn chuỗi.
+
+### 7.3 Vì sao vẫn có CVE thực tế dù đủ lớp bảo vệ
+
+Mục 8 cho thấy điều kiện ở 7.1 vẫn được thoả trong các triển khai cụ thể: CVE-2026-23918 cần thêm info leak + heap spray trước khi có RCE — đúng như dự đoán ở 7.2 (ASLR chỉ tăng chi phí, không chặn); điều kiện RCE còn phụ thuộc cấu hình triển khai (APR dùng mmap allocator) chứ không chỉ vào bản thân lỗi double free. Đây là lý do mục 8 phân biệt rõ "Tác động" (worst case) và "Điều kiện khai thác" (khi nào worst case đó đạt được).
+
+## 8. CVE thực tế (2025–2026)
+
+Ba case dưới đây là minh chứng cho mục 7.3: dù đủ các lớp bảo vệ ở mục 7.2, double free (CWE-415) vẫn bị khai thác thực tế khi điều kiện triển khai cụ thể (cấu hình, allocator, thời điểm patch) thoả mãn mục 7.1. Tổng quan các CVE double free (CWE-415) nghiêm trọng, đã bị khai thác thực tế trong giai đoạn 2025–2026:
 
 | Năm | CVE | Sản phẩm | Chuỗi | CVSS | Trạng thái khai thác |
 | --- | --- | --- | --- | --- | --- |
@@ -306,7 +342,7 @@ Tổng quan các CVE double free (CWE-415) nghiêm trọng, đã bị khai thác
 | 2026 | CVE-2026-23918 | Apache HTTP Server 2.4.66 (`mod_http2`) | double free → DoS/RCE | 8.8 – High | Đã khai thác DoS thực tế |
 | 2025 | CVE-2025-62215 | Windows Kernel | race condition → double free → EoP | 7.0 – High | Đã khai thác thực tế (CISA KEV 12/11/2025) |
 
-### 7.1 CVE-2026-33824 — Windows IKE Extension (2026, đại diện Critical)
+### 8.1 CVE-2026-33824 — Windows IKE Extension (2026, đại diện Critical)
 
 | Trường | Nội dung |
 | --- | --- |
@@ -318,7 +354,7 @@ Tổng quan các CVE double free (CWE-415) nghiêm trọng, đã bị khai thác
 | **Biện pháp khắc phục** | Cập nhật bản vá Microsoft tháng 4/2026 (hoặc mới hơn); nếu chưa vá: chặn UDP 500/4500 với host không cần IKE, giới hạn peer tin cậy, không expose VPN/IPsec trực tiếp ra Internet khi không cần thiết |
 | **Liên hệ chuỗi khai thác** | Đúng mô hình của seminar: double free → heap corruption → tái sử dụng vùng đã free → kiểm soát object/con trỏ → thực thi mã trong context dịch vụ đặc quyền |
 
-### 7.2 CVE-2026-23918 — Apache HTTP Server, double free trong mod_http2 (2026)
+### 8.2 CVE-2026-23918 — Apache HTTP Server, double free trong mod_http2 (2026)
 
 | Trường | Nội dung |
 | --- | --- |
@@ -329,7 +365,7 @@ Tổng quan các CVE double free (CWE-415) nghiêm trọng, đã bị khai thác
 | **Điều kiện khai thác** | HTTP/2 bật + MPM đa luồng; RCE cần thêm info leak và heap spray (đã được chứng minh trong phòng lab) |
 | **Biện pháp khắc phục** | Nâng lên 2.4.67; tạm thời tắt `mod_http2`; chỉ 2.4.66 bị ảnh hưởng (2.4.65 và 2.4.67 trở đi an toàn) |
 
-### 7.3 CVE-2025-62215 — Windows Kernel, race condition dẫn tới double free (2025)
+### 8.3 CVE-2025-62215 — Windows Kernel, race condition dẫn tới double free (2025)
 
 | Trường | Nội dung |
 | --- | --- |
@@ -340,9 +376,44 @@ Tổng quan các CVE double free (CWE-415) nghiêm trọng, đã bị khai thác
 | **Điều kiện khai thác** | Người dùng cục bộ có quyền thấp; cần thắng race (thử lặp nhiều lần) |
 | **Biện pháp khắc phục** | Cập nhật bản vá Patch Tuesday tháng 11/2025 của Microsoft; theo dõi CISA KEV |
 
-Điểm chung của cả ba CVE: vùng nhớ (hoặc đối tượng) bị giải phóng hai lần → allocator phân phối lại cùng vùng nhớ cho hai mục đích khác nhau → kẻ tấn công ghi đè cấu trúc/con trỏ → chiếm quyền thực thi. Đây chính là "chuỗi khai thác" mà seminar minh họa trên userland (glibc): **double free → alias hai con trỏ → poisoning → ghi tuỳ ý → chiếm luồng thực thi**.
+Điểm chung của cả ba CVE: vùng nhớ (hoặc đối tượng) bị giải phóng hai lần → allocator phân phối lại cùng vùng nhớ cho hai mục đích khác nhau → kẻ tấn công ghi đè cấu trúc/con trỏ → chiếm quyền thực thi. Đây chính là "chuỗi khai thác" mà seminar minh họa trên userland (glibc): **double free → alias hai con trỏ → poisoning → ghi tuỳ ý → chiếm luồng thực thi**. Mục 9 tổng hợp từ ba case này thành biện pháp khắc phục ở nhiều tầng — không chỉ vá riêng từng CVE mà loại bỏ cả lớp lỗi CWE-415.
 
-## 8. Thuật ngữ nhanh
+## 9. Biện pháp khắc phục và phòng ngừa
+
+Double free là lỗi về **quyền sở hữu vùng nhớ** (mục 5.1), nên biện pháp hiệu quả nhất nằm ở tầng thiết kế code, không chỉ ở tầng vá từng chunk. Dưới đây chia theo tầng, từ rẻ/sớm nhất đến tốn kém/muộn nhất.
+
+### 9.1 Tầng mã nguồn (ngăn lỗi phát sinh)
+
+- **Một con trỏ — một chủ sở hữu**: xác định rõ hàm/struct nào chịu trách nhiệm `free()`; tránh để hai con trỏ alias cùng trỏ một vùng nhớ mà không rõ ai free trước (mục 5.1).
+- **`free()` xong, gán lại `NULL` ngay**: `free(NULL)` hợp lệ theo chuẩn C và không làm gì — cách rẻ nhất chặn phần lớn case thực tế (`free(p); p = NULL;`).
+- **Không `free()` trong nhánh lỗi rồi `free()` lại ở cleanup chung** (mẫu lỗi điển hình ở mục 5.1) — chọn một trong hai nơi chịu trách nhiệm, không cả hai.
+- **C++**: dùng `std::unique_ptr`/`std::shared_ptr` thay con trỏ thô — compiler/runtime tự quản lý vòng đời, loại bỏ toàn bộ lớp lỗi double-free/UAF do thiết kế.
+- **Đa luồng**: nếu nhiều thread cùng tham chiếu một object, dùng refcount đúng (atomic) hoặc lock quanh free, không free "optimistic" dựa trên điều kiện race (như CVE-2025-62215, mục 8.3).
+
+### 9.2 Tầng công cụ (phát hiện trước khi ship)
+
+- **AddressSanitizer** (`-fsanitize=address`): bắt double-free/UAF ngay khi chạy, kèm stack trace cả hai lần free — nên bật trong CI cho test suite.
+- **Valgrind** (`--tool=memcheck`): chậm hơn ASan nhưng không cần biên dịch lại.
+- **`MALLOC_CHECK_=3`** (glibc): bật kiểm tra heap runtime nhẹ hơn ASan, dùng được cả với binary đã build sẵn.
+- **Static analysis** (Clang Static Analyzer, Coverity, Cppcheck): bắt một số pattern double-free tĩnh, hữu ích cho nhánh lỗi không được test cover.
+- **Fuzzing có ASan** (libFuzzer, AFL++): hiệu quả nhất với double-free phụ thuộc input — đúng mô tả ở mục 5.1 ("hai con trỏ alias", "đa luồng") thường chỉ lộ ra với input/lịch trình cụ thể.
+
+### 9.3 Tầng allocator/runtime (giảm thiệt hại khi lỗi đã lọt)
+
+- glibc hiện đại tự có tcache `key` + safe-linking (mục 6.1) — không thay được code đúng, nhưng nâng chi phí khai thác.
+- **Hardened allocator** (hardened_malloc, Scudo, tcmalloc): có thể dùng làm drop-in (`LD_PRELOAD`), bổ sung kiểm tra double-free/canary chunk chặt hơn glibc mặc định — phù hợp khi không sửa được toàn bộ codebase cũ.
+- `GLIBC_TUNABLES=glibc.malloc.tcache_count=0`: chỉ nên dùng khi debug/nghiên cứu (mục 4), **không** dùng làm biện pháp phòng ngừa production — tắt tcache không sửa lỗi logic, chỉ đổi đường đi của nó (rơi xuống fastbin/unsorted bin, mục 5.4).
+
+### 9.4 Tầng hệ thống/vận hành (giảm blast radius)
+
+- Giữ **ASLR/PIE/NX/RELRO Full** luôn bật ở production — không chặn được double-free nhưng tăng mạnh chi phí chuỗi khai thác (mục 7.2).
+- Giảm attack surface theo khuyến nghị riêng từng CVE (mục 8): không expose dịch vụ VPN/IPsec (CVE-2026-33824) hoặc HTTP/2 (CVE-2026-23918) trực tiếp ra Internet khi không cần thiết.
+- Patch management theo CISA KEV/NVD — double-free thường bị khai thác trong khung thời gian ngắn sau khi PoC công khai (mục 8).
+- Chạy dịch vụ với quyền thấp nhất cần thiết + seccomp — không ngăn khai thác heap nhưng giới hạn hệ quả nếu chuỗi đi hết (mục 7.2).
+
+## 10. Thuật ngữ nhanh
+
+Tổng hợp các thuật ngữ đã dùng xuyên suốt mục 1–9, để tra cứu nhanh khi đọc lại hoặc trình bày:
 
 | Thuật ngữ | Giải thích |
 | --- | --- |
