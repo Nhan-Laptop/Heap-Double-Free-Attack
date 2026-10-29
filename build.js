@@ -213,14 +213,14 @@ sec("Mở đầu");
 {
   const s = S("Nội dung bám theo 8 yêu cầu của đề", "MỤC LỤC");
   const items = [
-    ["YÊU CẦU 1", "Khái niệm, nguyên lý, điều kiện phát sinh", "Phần 01 nền tảng bộ nhớ · phần 02 arenas · phần 03 double free"],
+    ["YÊU CẦU 1", "Khái niệm, nguyên lý, điều kiện phát sinh", "Phần 01 Stack/Heap · 02 Arena · 03 Dữ liệu heap · 04 Tcache · 05 Double free"],
     ["YÊU CẦU 2", "Mã CWE tương ứng", "CWE-415 Double Free · CWE-416 Use After Free"],
     ["YÊU CẦU 3", "Vị trí lỗ hổng và nguyên nhân", "Source glibc-2.27: __libc_free, _int_free, tcache_put/get · PoC 5.5"],
-    ["YÊU CẦU 4", "CVE thực tế liên quan", "Phần 07: CVE-2026-33824, CVE-2026-23918, CVE-2025-62215"],
-    ["YÊU CẦU 5", "Chuỗi khai thác và mối liên hệ", "Phần 04: tcache poisoning, sơ đồ lỗ hổng · CWE · kỹ thuật · CVE"],
-    ["YÊU CẦU 6", "Demo Pwnable thủ công và có AI", "Phần 05: PoC Sink A / Sink B trong container glibc 2.27"],
-    ["YÊU CẦU 7", "Biện pháp khắc phục, phòng ngừa", "Phần 08: mã nguồn, công cụ, allocator, vận hành"],
-    ["YÊU CẦU 8", "Điều kiện, cơ chế bảo vệ, giới hạn", "Phần 06: điều kiện cần, 7 tầng bảo vệ, vì sao vẫn có CVE"],
+    ["YÊU CẦU 4", "CVE thực tế liên quan", "Phần 09: CVE-2026-33824, CVE-2026-23918, CVE-2025-62215"],
+    ["YÊU CẦU 5", "Chuỗi khai thác và mối liên hệ", "Phần 06: tcache poisoning, sơ đồ lỗ hổng · CWE · kỹ thuật · CVE"],
+    ["YÊU CẦU 6", "Demo Pwnable thủ công và có AI", "Phần 07: PoC Sink A / Sink B trong container glibc 2.27"],
+    ["YÊU CẦU 7", "Biện pháp khắc phục, phòng ngừa", "Phần 10: mã nguồn, công cụ, allocator, vận hành"],
+    ["YÊU CẦU 8", "Điều kiện, cơ chế bảo vệ, giới hạn", "Phần 08: điều kiện cần, 7 tầng bảo vệ, vì sao vẫn có CVE"],
   ];
   const w = (12.33 - 3 * 0.25) / 4, h = 2.5;
   items.forEach(([l, hd, b], i) => {
@@ -232,9 +232,9 @@ sec("Mở đầu");
 // =====================================================================
 // 01 NỀN TẢNG
 // =====================================================================
-sec("01 Nền tảng bộ nhớ");
-divider("01", "Nền tảng bộ nhớ", "Yêu cầu 1 · stack, heap, cấu trúc chunk, bin và tcache",
-  ["1.1  Stack", "1.2  Heap", "3    Ranh giới OS vs glibc", "3.1  Cấu trúc heap chunk", "3.2  malloc() cấp phát", "3.3  Bins", "4    Tcache"]);
+sec("01 Stack và Heap");
+divider("01", "Stack và Heap", "Yêu cầu 1 · hai vùng nhớ của một tiến trình",
+  ["1.1  Stack", "1.2  Heap"]);
 {
   const s = S("Stack và Heap", "1 · HAI VÙNG NHỚ CỦA MỘT TIẾN TRÌNH");
   img(s, "image-1.png", 0.5, 1.55, 6.4, 5.25, 720 / 540);
@@ -272,147 +272,27 @@ divider("01", "Nền tảng bộ nhớ", "Yêu cầu 1 · stack, heap, cấu tr�
 // 02 ARENAS
 // =====================================================================
 sec("02 Arenas");
-divider("02", "Arenas", "Yêu cầu 1 · main_arena, non-main arena và cách glibc quản lý heap theo từng thread",
-  ["2    Ranh giới OS vs glibc", "2.1  struct malloc_state", "2.2  main vs non-main", "2.3  _int_new_arena()", "2.4  Thread chọn arena", "2.5 2.7  bit A, linked list"]);
+divider("02", "Arenas", "Yêu cầu 1 · lớp quản lý heap của glibc theo từng thread — tóm tắt ngắn, không phải trọng tâm seminar",
+  ["2    Arena là gì", "2.2 2.6  main vs non-main", "2.4 2.5 2.7  tóm tắt nhanh"]);
 {
-  const s = S("Ranh giới: OS cấp vùng nhớ, glibc tự quản lý arena", "KHÁI NIỆM · MỤC 2 · OS KHÔNG BIẾT GÌ VỀ \"ARENA\"");
-  tile(s, 0.5, 1.55, 6.04, 4.1, { label: "OS / KERNEL", head: "Chỉ cấp VÙNG địa chỉ ảo", hs: 22, hh: 0.55, body: [
-    "`brk()`/`sbrk()`: mở rộng heap liền mạch, nối tiếp data segment",
-    "`mmap()`: cấp một vùng lớn, riêng, ở địa chỉ khác",
-    "OS không biết gì về `malloc()`, `free()` hay \"chunk\" — đó không phải khái niệm của OS",
-  ], size: 15, space: 8 });
-  tile(s, 6.79, 1.55, 6.04, 4.1, { fill: AMB, label: "GLIBC — USER-SPACE, KHÔNG ĐẶC QUYỀN KERNEL", head: "Arena là lớp quản lý NẰM TRÊN vùng đó", hs: 20, hh: 1.0, body: [
-    "`struct malloc_state` (mục 2.1) tổ chức vùng OS vừa cấp thành chunk/bin",
-    "main_arena dùng vùng từ `brk()`; non-main arena dùng vùng từ `mmap()` — cả hai do glibc tự quản lý, không phải OS",
-  ], size: 15, space: 8 });
-  tile(s, 0.5, 5.85, 12.33, 1.0, { body: "Giữ ranh giới này rõ trước khi vào chi tiết: mục 2.1–2.7 nói về cấu trúc `malloc_state` cụ thể mà glibc dùng để quản lý arena.", bullet: false, size: 14 });
-}
-{
-  const s = S("struct malloc_state: sổ sách của một arena", "2.1 · malloc.c:1674–1715");
-  code(s, 0.5, 1.55, 6.3, 5.25, [
-    "struct malloc_state",
-    "{",
-    "  __libc_lock_define (, mutex);",
-    "  int flags;",
-    "  int have_fastchunks;",
-    "!  mfastbinptr fastbinsY[NFASTBINS];  /* fastbin (3.3) */",
-    "!  mchunkptr top;             /* top chunk, mục 3.1    */",
-    "  mchunkptr last_remainder;",
-    "!  mchunkptr bins[NBINS * 2 - 2];    /* small+large(3.3)*/",
-    "  unsigned int binmap[BINMAPSIZE];",
-    "!  struct malloc_state *next;  /* DS liên kết CÁC ARENA */",
-    "  struct malloc_state *next_free;",
-    "  INTERNAL_SIZE_T attached_threads;",
-    "  INTERNAL_SIZE_T system_mem, max_system_mem;",
-    "};",
-  ], { size: 11 });
-  tile(s, 7.05, 1.55, 5.78, 2.3, { line: RED, lc: RED, label: "KHÔNG CÓ TRƯỜNG NÀO TÊN \"TCACHE\"", body: "Tcache (mục 4) là lớp phía trước arena, nằm trong TLS của từng thread — không thuộc malloc_state.", bullet: false, size: 14 });
-  tile(s, 7.05, 4.05, 5.78, 2.75, { fill: AMB, label: "MỌI BIN (TRỪ TCACHE) NẰM TRONG STRUCT NÀY", body: "fastbinsY[], bins[] (small+large), top đều được nhân bản theo từng arena — không dùng chung toàn process như tcache.", bullet: false, size: 14 });
-}
-{
-  const s = S("main_arena vs non-main arena", "2.2 · 2.3 · 2.6 · malloc.c:1761–1766 · arena.c:53–64, 685");
-  code(s, 0.5, 1.55, 6.04, 2.1, [
-    "static struct malloc_state main_arena =",
-    "{",
-    "!  .mutex = _LIBC_LOCK_INITIALIZER,",
-    "!  .next = &main_arena,    /* khép vòng DS liên kết */",
-    "  .attached_threads = 1",
-    "};",
-  ], { size: 11.5, cap: "main_arena: biến static trong .data/.bss libc" });
-  code(s, 6.79, 1.55, 6.04, 2.1, [
-    "typedef struct _heap_info",
-    "{",
-    "!  mstate ar_ptr;          /* arena sở hữu heap này */",
-    "  struct _heap_info *prev; /* sub-heap trước (nếu có) */",
-    "  size_t size;",
-    "  size_t mprotect_size;",
-    "} heap_info;",
-  ], { size: 11.5, cap: "heap_info: header đứng trước malloc_state của non-main arena" });
+  const s = S("Arena: lớp quản lý heap của glibc (tóm tắt)", "2 · KHÔNG PHẢI TRỌNG TÂM · malloc.c:1674 · arena.c:53, 685");
+  tile(s, 0.5, 1.55, 12.33, 1.5, { fill: AMB, body: "`struct malloc_state` (arena) là lớp glibc dùng để quản lý vùng heap mà OS đã cấp qua `brk()`/`mmap()` — không phải khái niệm của OS. Mỗi process có đúng 1 `main_arena` tĩnh; glibc tạo thêm non-main arena khi một thread gặp tranh chấp khoá (không arena nào đang rảnh, `_int_new_arena`, arena.c:685).", bullet: false, size: 15 });
   table(s, [
     ["Đặc điểm", "main_arena", "non-main arena"],
     ["malloc_state nằm ở đâu", "static trong .data/.bss libc", "trong mmap, ngay sau heap_info (h + 1)"],
     ["Vùng heap lấy từ đâu", "brk()/sbrk() — liền mạch", "mmap(), căn HEAP_MAX_SIZE — thường ở xa"],
-    ["Mở rộng khi hết chỗ", "gọi MORECORE/sbrk lần nữa", "grow_heap() rồi new_heap() nếu không đủ"],
     ["Bit A trên chunk", "luôn 0", "luôn 1"],
-    ["Số lượng", "đúng 1, suốt tiến trình", "0..mp_.arena_max"],
-    ["Sinh ra khi nào", "có sẵn từ lúc nạp libc", "chỉ khi một thread gặp tranh chấp khoá"],
-  ], 0.5, 3.75, 12.33, [2.9, 4.33, 5.1], { size: 12, boldFirst: true });
+    ["Số lượng", "đúng 1, suốt tiến trình", "0..mp_.arena_max, sinh khi tranh chấp khoá"],
+  ], 0.5, 3.3, 12.33, [3.0, 4.5, 4.83], { size: 13, boldFirst: true });
+  tile(s, 0.5, 5.65, 12.33, 1.35, { body: "Mỗi thread cache một arena qua con trỏ TLS `thread_arena`; mọi arena nối nhau qua danh sách liên kết đơn, vòng tròn (`next`, arena.c:74,113). Bit `A` + `heap_for_ptr()` (arena.c:127) giúp glibc tra lại đúng arena sở hữu một chunk mà không cần lưu con trỏ arena trong từng chunk.", bullet: false, size: 13.5 });
 }
-{
-  const s = S("_int_new_arena(): non-main arena sinh ra khi nào", "2.3 · arena.c:685–749, rút gọn");
-  code(s, 0.5, 1.55, 6.9, 5.25, [
-    "static mstate",
-    "_int_new_arena (size_t size)",
-    "{",
-    "  mstate a; heap_info *h; ...",
-    "!  h = new_heap (size + (sizeof (*h) + sizeof (*a)",
-    "!                + MALLOC_ALIGNMENT), mp_.top_pad);",
-    "",
-    "!  a = h->ar_ptr = (mstate) (h + 1);",
-    "!             /* malloc_state nằm NGAY SAU heap_info */",
-    "  malloc_init_state (a);",
-    "  a->attached_threads = 1;",
-    "  a->system_mem = a->max_system_mem = h->size;",
-    "  ...",
-    "!  top (a) = (mchunkptr) ptr;  /* top chunk arena mới */",
-    "  ...",
-    "  mstate replaced_arena = thread_arena;",
-    "!  thread_arena = a;        /* gán arena mới cho THREAD này */",
-    "  ...",
-    "!  a->next = main_arena.next;  /* chèn vào đầu DS liên kết */",
-    "!  main_arena.next = a;",
-    "}",
-  ], { size: 10 });
-  tile(s, 7.65, 1.55, 5.18, 1.7, { label: "GỌI KHI NÀO", body: "arena_get không lấy được arena nào đang rảnh — mọi arena hiện có đều bị thread khác khoá", bullet: false, size: 13.5 });
-  tile(s, 7.65, 3.4, 5.18, 1.6, { fill: AMB, label: "new_heap() CẤP GÌ", body: "Một vùng mmap mới, căn HEAP_MAX_SIZE; malloc_state nằm ngay sau heap_info trong CHÍNH vùng đó", bullet: false, size: 13.5 });
-  tile(s, 7.65, 5.15, 5.18, 1.65, { label: "HAI TÁC DỤNG PHỤ CUỐI HÀM", body: [
-    "thread_arena (TLS, mục 2.4) được gán arena mới",
-    "a->next = main_arena.next rồi main_arena.next = a: arena mới luôn chèn ngay sau main_arena",
-  ], size: 12.5, space: 4 });
-}
-{
-  const s = S("Một thread chọn arena nào", "2.4 · arena.c:74, 113, 118");
-  code(s, 0.5, 1.55, 6.9, 3.0, [
-    "static __thread mstate thread_arena",
-    "  attribute_tls_model_ie;      /* arena.c:74 */",
-    "",
-    "#define arena_get(ptr, size) do {        /* 113 */",
-    "!  ptr = thread_arena;  /* dùng lại arena đã cache */",
-    "  arena_lock (ptr, size);",
-    "} while (0)",
-    "",
-    "#define arena_lock(ptr, size) do {       /* 118 */",
-    "  if (ptr)",
-    "    __libc_lock_lock (ptr->mutex);",
-    "  else",
-    "!    ptr = arena_get2 ((size), NULL);  /* chưa có -> tìm/tạo */",
-    "} while (0)",
-  ], { size: 10.5 });
-  tile(s, 0.5, 4.75, 6.9, 2.05, { label: "thread_arena LÀ CON TRỎ TLS (__thread)", body: "Mỗi thread giữ một bản riêng, không chia sẻ — khác hẳn malloc_state dùng chung trong một arena.", bullet: false, size: 14 });
-  tile(s, 7.65, 1.55, 5.18, 2.5, { fill: AMB, label: "LẦN malloc()/free() ĐẦU TIÊN CỦA THREAD", body: "thread_arena == NULL → rơi vào arena_get2: thử tái sử dụng arena rảnh trong free_list (reused_arena, arena.c:811), không có mới gọi _int_new_arena (2.3).", bullet: false, size: 14 });
-  tile(s, 7.65, 4.3, 5.18, 2.5, { label: "SAU LẦN ĐẦU", body: "thread_arena đã có giá trị: mọi malloc()/free() kế tiếp của thread này vào thẳng arena đó, chỉ còn khoá mutex, không phải tìm/tạo lại.", bullet: false, size: 14 });
-}
-{
-  const s = S("Hai thread, hai arena, một danh sách liên kết", "2.5 · 2.7 · arena.c:127, 129");
-  box(s, 0.5, 1.55, 6.04, 3.1, TILE, BRD);
-  s.addText("THREAD 1 (MAIN) — chưa tranh chấp khoá", { x: 0.7, y: 1.73, w: 5.6, h: 0.25, fontSize: 10, fontFace: MONO, bold: true, color: AMB, margin: 0, isTextBox: true });
-  cell(s, 0.8, 2.15, 5.44, 0.7, "thread_arena (TLS) = &main_arena", { fill: CODE });
-  arrow(s, 3.5, 2.85, 3.5, 3.15);
-  cell(s, 0.8, 3.25, 5.44, 0.9, "brk-heap liền mạch · bit A = 0 trên mọi chunk", { fill: CODE, size: 12 });
-  box(s, 6.79, 1.55, 6.04, 3.1, TILE, BRD);
-  s.addText("THREAD 2 — tranh chấp khoá → _int_new_arena()", { x: 6.99, y: 1.73, w: 5.6, h: 0.25, fontSize: 10, fontFace: MONO, bold: true, color: AMB, margin: 0, isTextBox: true });
-  cell(s, 7.09, 2.15, 5.44, 0.7, "thread_arena (TLS) = &Arena#2", { fill: CODE });
-  arrow(s, 9.8, 2.85, 9.8, 3.15);
-  cell(s, 7.09, 3.25, 5.44, 0.38, "heap_info · ar_ptr ↓  (arena.c:53, mmap mới)", { fill: CODE, size: 10.5 });
-  cell(s, 7.09, 3.68, 5.44, 0.47, "malloc_state ngay sau (h + 1) · bit A = 1 trên mọi chunk", { fill: CODE, line: RED, color: RED, size: 10.5 });
-  s.addText("main_arena.next →", { x: 5.95, y: 1.37, w: 1.5, h: 0.16, fontSize: 8, fontFace: MONO, bold: true, color: AMB, align: "center", margin: 0, isTextBox: true });
-  arrow(s, 6.56, 1.53, 6.77, 1.53, AMB);
-  tile(s, 0.5, 4.85, 6.04, 1.95, { label: "DANH SÁCH LIÊN KẾT ARENA (VÒNG TRÒN)", body: "main_arena.next → Arena#2 → main_arena: đơn, vòng tròn qua trường next (mũi tên phía trên là chiều main_arena.next). Arena mới luôn chèn ngay sau main_arena.", bullet: false, size: 13 });
-  tile(s, 6.79, 4.85, 6.04, 1.95, { label: "heap_for_ptr / arena_for_chunk", body: [
-    "`heap_for_ptr(p) = p & ~(HEAP_MAX_SIZE-1)` → heap_info",
-    "bit A = 0 → trả thẳng &main_arena, không cần tính gì",
-  ], size: 13 });
-}
+
+// =====================================================================
+// 03 DỮ LIỆU TRÊN HEAP
+// =====================================================================
+sec("03 Dữ liệu trên heap");
+divider("03", "Dữ liệu trên heap", "Yêu cầu 1 · ranh giới OS/glibc, cấu trúc chunk, malloc() cấp phát, 5 loại bin",
+  ["3    Ranh giới OS vs glibc", "3.1  Cấu trúc heap chunk", "3.2  malloc() cấp phát", "3.3  5 loại bin", "3.3  Vị trí bin trong malloc()"]);
 {
   const s = S("Ranh giới: OS cấp vùng, glibc chia nhỏ thành chunk", "KHÁI NIỆM · MỤC 3 · TRƯỚC KHI VÀO CHI TIẾT CHUNK");
   tile(s, 0.5, 1.55, 6.04, 4.1, { label: "MỤC 2 · OS", head: "Cấp vùng địa chỉ ảo thô", hs: 22, hh: 0.55, body: [
@@ -518,6 +398,12 @@ divider("02", "Arenas", "Yêu cầu 1 · main_arena, non-main arena và cách gl
   });
   tile(s, 0.5, 5.35, 12.33, 1.45, { fill: AMB, body: "Bước 1 nằm ở __libc_malloc (mục 5.1) — KHÔNG chạm _int_malloc; bước 2–6 mới nằm trong _int_malloc. Đây là lý do mục 5.4 phân biệt \"free trùng lọt qua tcache\" khác \"lọt qua fastbin\": hai bin đứng ở hai bước đầu tiên, riêng biệt. (Viền nét đứt = từng bước quyết định của malloc(), không phải vùng nhớ thật.)", bullet: false, size: 13 });
 }
+// =====================================================================
+// 04 TCACHE
+// =====================================================================
+sec("04 Tcache");
+divider("04", "Tcache", "Yêu cầu 1 · bản chất, lý do ra đời và cấu trúc dữ liệu chi tiết",
+  ["4-a,b  Bản chất & lý do ra đời", "4-c  tcache_perthread_struct", "4-d,e  tcache_entry & csize2tidx", "4-f,g,h  tcache_init() & giới hạn"]);
 {
   const s = S("Tcache: cache riêng cho từng thread", "4-a,b · BẢN CHẤT VÀ LÝ DO RA ĐỜI");
   tile(s, 0.5, 1.55, 6.04, 3.4, { label: "a) TRƯỚC GLIBC 2.26 (2017)", head: "Một ổ khóa cho mọi thread", body: [
@@ -531,7 +417,7 @@ divider("02", "Arenas", "Yêu cầu 1 · main_arena, non-main arena và cách gl
     "Khai báo `__thread`: mỗi thread một bản sao độc lập",
   ] });
   tile(s, 0.5, 5.2, 12.33, 1.6, { line: RED, label: "HỆ QUẢ BẢO MẬT", lc: RED, head: "Không khóa nghĩa là không có người gác cổng", hs: 20,
-    body: "Ngoài vài dòng trong tcache_put/tcache_get, không có kiểm tra hợp lệ nào. Toàn bộ phần 02 và 03 xoay quanh điểm này.", bullet: false, size: 14 });
+    body: "Ngoài vài dòng trong tcache_put/tcache_get, không có kiểm tra hợp lệ nào. Toàn bộ phần 05 và 06 (double free, tcache poisoning) xoay quanh điểm này.", bullet: false, size: 14 });
 }
 {
   const s = S("tcache_perthread_struct: sổ sách của tcache", "4-c · malloc.c:2914–2921 · glibc-2.27");
@@ -634,8 +520,8 @@ divider("02", "Arenas", "Yêu cầu 1 · main_arena, non-main arena và cách gl
 // =====================================================================
 // 02 DOUBLE FREE
 // =====================================================================
-sec("03 Lỗ hổng Double Free");
-divider("03", "Lỗ hổng Double Free", "Yêu cầu 1, 2, 3 · khái niệm, CWE, vị trí lỗi trong source glibc và PoC",
+sec("05 Lỗ hổng Double Free");
+divider("05", "Lỗ hổng Double Free", "Yêu cầu 1, 2, 3 · khái niệm, CWE, vị trí lỗi trong source glibc và PoC",
   ["5    Bản chất", "5.1  free/malloc trong glibc", "5.2  Điều kiện phát sinh", "5.3  CWE", "5.4  Theo phiên bản glibc", "5.5  Ví dụ & 2 sink"]);
 {
   const s = S("Double free: free() hai lần cùng một vùng nhớ", "YÊU CẦU 1 · KHÁI NIỆM VÀ NGUYÊN LÝ");
@@ -947,8 +833,8 @@ divider("03", "Lỗ hổng Double Free", "Yêu cầu 1, 2, 3 · khái niệm, CW
 // =====================================================================
 // 03 KHAI THÁC
 // =====================================================================
-sec("04 Kỹ thuật khai thác");
-divider("04", "Kỹ thuật khai thác", "Yêu cầu 5 · tcache poisoning, biến thể hiện đại, mối liên hệ lỗ hổng · CWE · CVE",
+sec("06 Kỹ thuật khai thác");
+divider("06", "Kỹ thuật khai thác", "Yêu cầu 5 · tcache poisoning, biến thể hiện đại, mối liên hệ lỗ hổng · CWE · CVE",
   ["6.1  Cơ chế ghi next", "6.1  Quy trình 4 bước", "6.2  Mục tiêu thực tế", "6.3  Metadata attack", "6.4  Biến thể khác (ngoài phạm vi)", "     Chuỗi khai thác"]);
 {
   const s = S("Tcache poisoning: ghi đè next để điều hướng malloc()", "6.1 · KHÔNG FREE TRÙNG NỮA — GHI ĐÈ next CỦA CHUNK ĐÃ FREE");
@@ -1024,7 +910,7 @@ divider("04", "Kỹ thuật khai thác", "Yêu cầu 5 · tcache poisoning, bi�
    ["Tcache stashing unlink attack", "Làm hỏng bk của smallbin trước khi glibc tự chuyển chunk sang tcache, khiến nó nhét một chunk giả vào tcache thay vì ghi next trực tiếp."],
    ["Bypass safe-linking", "Leak heap base (đọc/in chunk tcache đã free, hoặc overlap/UAF khác) rồi tự mã hoá next theo công thức ở 6.1, thay vì ghi next trần."]]
     .forEach(([hd, b], i) => tile(s, 0.5 + i * (w + 0.25), 3.3, w, h, { label: "BIẾN THỂ", head: hd, hs: 15, hh: 0.55, body: b, bullet: false, size: 12.5 }));
-  tile(s, 0.5, 5.55, 12.33, 1.25, { fill: AMB, body: "Chi tiết: how2heap (shellphish) — mục Tài liệu tham khảo. Không phải phạm vi demo ở phần 05.", bullet: false, size: 14 });
+  tile(s, 0.5, 5.55, 12.33, 1.25, { fill: AMB, body: "Chi tiết: how2heap (shellphish) — mục Tài liệu tham khảo. Không phải phạm vi demo ở phần 07.", bullet: false, size: 14 });
 }
 {
   const s = S("Lỗ hổng · CWE · kỹ thuật · CVE liên hệ thế nào", "YÊU CẦU 5 · CHUỖI KHAI THÁC");
@@ -1048,8 +934,8 @@ divider("04", "Kỹ thuật khai thác", "Yêu cầu 5 · tcache poisoning, bi�
 // =====================================================================
 // 04 DEMO
 // =====================================================================
-sec("05 Demo");
-divider("05", "Demo khai thác", "Yêu cầu 6 · PoC Sink A / Sink B trên glibc 2.27, hai hướng: thủ công và có AI hỗ trợ",
+sec("07 Demo");
+divider("07", "Demo khai thác", "Yêu cầu 6 · PoC Sink A / Sink B trên glibc 2.27, hai hướng: thủ công và có AI hỗ trợ",
   ["Môi trường cô lập", "Hướng 1: thủ công", "Hướng 2: có AI hỗ trợ"]);
 {
   const s = S("Môi trường demo cô lập", "YÊU CẦU 6 · MỤC TIÊU: POC SINK A / SINK B (5.5)");
@@ -1126,8 +1012,8 @@ divider("05", "Demo khai thác", "Yêu cầu 6 · PoC Sink A / Sink B trên glib
 // =====================================================================
 // 05 ĐIỀU KIỆN & BẢO VỆ
 // =====================================================================
-sec("06 Điều kiện và cơ chế bảo vệ");
-divider("06", "Điều kiện & cơ chế bảo vệ", "Yêu cầu 8 · cần gì để đi hết chuỗi, lớp nào chặn ở đâu, vì sao vẫn có CVE",
+sec("08 Điều kiện và cơ chế bảo vệ");
+divider("08", "Điều kiện & cơ chế bảo vệ", "Yêu cầu 8 · cần gì để đi hết chuỗi, lớp nào chặn ở đâu, vì sao vẫn có CVE",
   ["7.1  Điều kiện cần", "7.2  Bảo vệ theo tầng", "7.3  Vì sao vẫn có CVE"]);
 {
   const s = S("Điều kiện để chuỗi khai thác đi hết", "YÊU CẦU 8 · 7.1 · PHẢI THOẢ ĐỒNG THỜI");
@@ -1175,8 +1061,8 @@ divider("06", "Điều kiện & cơ chế bảo vệ", "Yêu cầu 8 · cần g�
 // =====================================================================
 // 06 CVE
 // =====================================================================
-sec("07 CVE thực tế");
-divider("07", "CVE thực tế 2025–2026", "Yêu cầu 4 · sản phẩm, nguyên nhân, tác động, điều kiện khai thác, khắc phục",
+sec("09 CVE thực tế");
+divider("09", "CVE thực tế 2025–2026", "Yêu cầu 4 · sản phẩm, nguyên nhân, tác động, điều kiện khai thác, khắc phục",
   ["CVE-2026-33824", "CVE-2026-23918", "CVE-2025-62215", "Điểm chung"]);
 {
   const s = S("Ba CVE double free đã bị khai thác thực tế", "YÊU CẦU 4 · CWE-415 · 2025–2026");
@@ -1270,14 +1156,14 @@ divider("07", "CVE thực tế 2025–2026", "Yêu cầu 4 · sản phẩm, nguy
     ["CVE-2026-23918", "Hai callback cùng đẩy h2_stream vào mảng cleanup", "hai nơi cùng dọn dẹp", "DoS; RCE khi dùng mmap allocator"],
     ["CVE-2025-62215", "Race condition trên tài nguyên dùng chung trong kernel", "đa luồng / sai đồng bộ", "Leo quyền lên SYSTEM"],
   ], 0.5, 3.15, 12.33, [2.2, 4.6, 2.5, 3.03], { size: 13, boldFirst: true });
-  tile(s, 0.5, 5.55, 12.33, 1.25, { fill: AMB, body: "Phần 08 không vá riêng từng CVE mà loại bỏ cả lớp lỗi CWE-415, ở nhiều tầng.", bullet: false, size: 16 });
+  tile(s, 0.5, 5.55, 12.33, 1.25, { fill: AMB, body: "Phần 10 không vá riêng từng CVE mà loại bỏ cả lớp lỗi CWE-415, ở nhiều tầng.", bullet: false, size: 16 });
 }
 
 // =====================================================================
 // 07 KHẮC PHỤC
 // =====================================================================
-sec("08 Khắc phục và phòng ngừa");
-divider("08", "Khắc phục & phòng ngừa", "Yêu cầu 7 · double free là lỗi quyền sở hữu vùng nhớ, chia theo tầng từ rẻ và sớm nhất",
+sec("10 Khắc phục và phòng ngừa");
+divider("10", "Khắc phục & phòng ngừa", "Yêu cầu 7 · double free là lỗi quyền sở hữu vùng nhớ, chia theo tầng từ rẻ và sớm nhất",
   ["9.1  Mã nguồn", "9.2  Công cụ", "9.3  Allocator / runtime", "9.4  Hệ thống / vận hành", "9.5  Đối chiếu 3 CVE"]);
 {
   const s = S("Tầng mã nguồn: ngăn lỗi phát sinh", "YÊU CẦU 7 · 9.1 · RẺ VÀ SỚM NHẤT");
@@ -1341,7 +1227,7 @@ divider("08", "Khắc phục & phòng ngừa", "Yêu cầu 7 · double free là 
   R.forEach(([l, b], i) => tile(s, 6.79, 1.95 + i * 1.235, 6.04, 1.06, { label: l, body: b, bullet: false, size: 12.5 }));
 }
 {
-  const s = S("Đối chiếu với ba CVE ở phần 07", "YÊU CẦU 4 · 7 · 9.5 · TỔNG HỢP TỪ BA CASE THÀNH BIỆN PHÁP THEO TẦNG");
+  const s = S("Đối chiếu với ba CVE ở phần 09", "YÊU CẦU 4 · 7 · 9.5 · TỔNG HỢP TỪ BA CASE THÀNH BIỆN PHÁP THEO TẦNG");
   table(s, [
     ["CVE", "Nguyên nhân gốc", "Biện pháp đúng tầng", "Vá chính thức"],
     ["CVE-2026-33824", "Shallow copy con trỏ Security Realm giữa MMSA/PacketContext", "Ownership rõ ràng / deep copy (9.1)", "Bản vá Microsoft 4/2026; tạm chặn UDP 500/4500"],
