@@ -1,7 +1,6 @@
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **pi-p2o** (29680 symbols, 78888 relationships, 974 execution flows).
 
 > Index stale? Run `node .gitnexus/run.cjs analyze --index-only` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? Bootstrap with `npx`, `bunx`, or `pnpm dlx` — e.g. `bunx gitnexus@latest analyze` (npm 11 npx crash; #1939).
 
@@ -21,14 +20,6 @@ This project is indexed by GitNexus as **pi-p2o** (29680 symbols, 78888 relation
 - NEVER rename symbols with find-and-replace — use `rename` which understands the call graph.
 - NEVER commit before MCP/CLI graph change analysis.
 
-## Resources
-
-| Resource | Use for |
-| --- | --- |
-| `gitnexus://repo/pi-p2o/context` | Codebase overview, check index freshness |
-| `gitnexus://repo/pi-p2o/clusters` | All functional areas |
-| `gitnexus://repo/pi-p2o/processes` | All execution flows |
-| `gitnexus://repo/pi-p2o/process/{name}` | Step-by-step execution trace |
 
 ## CLI
 
@@ -62,77 +53,48 @@ attribution instruction.
   action. Never do it to remove a trailer unless the owner asks for that specific rewrite.
 - Commit, push and install remain owner-initiated only (see `docs/KNOWLEDGE_WORKSPACE.md`); a one-time approval does not carry over to the next time.
 
-# AGNETS.md
+# Working guidelines
 
-Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-specific instructions as needed.
+These target the mistakes that cost the most review time: unrequested changes, overbuilt solutions and unverified claims. For trivial tasks, use judgment and skip the ceremony.
 
-**Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
+## 1. Understand before coding
 
-## 1. Think Before Coding
+State assumptions that affect the result. Make routine judgment calls yourself, and check in only when different readings of the request would lead to materially different work; then lay out the readings with your recommendation. If a simpler approach exists or the request looks mistaken, say so in a sentence and continue with the task as asked rather than quietly narrowing, widening or transforming it.
 
-**Don't assume. Don't hide confusion. Surface tradeoffs.**
+## 2. Keep solutions small
 
-Before implementing:
-- State your assumptions explicitly. If uncertain, ask.
-- If multiple interpretations exist, present them - don't pick silently.
-- If a simpler approach exists, say so. Push back when warranted.
-- If something is unclear, stop. Name what's confusing. Ask.
+Write the minimum code that solves the problem, because every speculative feature is something the owner must review and maintain. Skip features beyond the request, abstractions for single-use code, configurability nobody asked for, and error handling for scenarios that cannot happen; validate at system boundaries. If a solution runs 200 lines and could be 50, rewrite it.
 
-## 2. Simplicity First
+## 3. Make surgical changes
 
-**Minimum code that solves the problem. Nothing speculative.**
+Every changed line should trace to the request. Match the surrounding style even where you would choose differently. Mention unrelated dead code instead of deleting it, and remove only the imports, variables and functions that your own change made unused.
 
-- No features beyond what was asked.
-- No abstractions for single-use code.
-- No "flexibility" or "configurability" that wasn't requested.
-- No error handling for impossible scenarios.
-- If you write 200 lines and it could be 50, rewrite it.
+## 4. Work toward checkable goals
 
-Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
+Turn the task into an observable end state before starting, so the work can run without further clarification:
 
-## 3. Surgical Changes
+- "Add validation" → tests for invalid inputs that pass.
+- "Fix the bug" → a test that reproduces it, then passes.
+- "Refactor X" → the same tests pass before and after.
 
-**Touch only what you must. Clean up only your own mess.**
+For multi-step work, state a brief plan with one check per step. Run the checks yourself rather than asking the owner to confirm something a command can answer.
 
-When editing existing code:
-- Don't "improve" adjacent code, comments, or formatting.
-- Don't refactor things that aren't broken.
-- Match existing style, even if you'd do it differently.
-- If you notice unrelated dead code, mention it - don't delete it.
-
-When your changes create orphans:
-- Remove imports/variables/functions that YOUR changes made unused.
-- Don't remove pre-existing dead code unless asked.
-
-The test: Every changed line should trace directly to the user's request.
-
-## 4. Goal-Driven Execution
-
-**Define success criteria. Loop until verified.**
-
-Transform tasks into verifiable goals:
-- "Add validation" → "Write tests for invalid inputs, then make them pass"
-- "Fix the bug" → "Write a test that reproduces it, then make it pass"
-- "Refactor X" → "Ensure tests pass before and after"
-
-For multi-step tasks, state a brief plan:
-```
-1. [Step] → verify: [check]
-2. [Step] → verify: [check]
-3. [Step] → verify: [check]
-```
-
-Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
-
----
-
-**These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
+These guidelines are working when diffs contain fewer unrequested changes, fewer solutions get rewritten for overcomplication, and clarifying questions come before implementation rather than after a mistake.
 
 # Compact instructions
 
-When you compact, always keep: the current plan, failing tests with their errors, files changed and why, decisions we made. Drop exploration and dead ends.
-
+When you compact, keep the current plan, failing tests with their errors, files changed and why, and decisions made. Drop exploration and dead ends.
 
 # Subagents
 
-With the task require: do a lot of research, ref a lot of references, you should spawn the agent to discover and take a combination to avoid loss context.
+Delegate wide research, such as sweeping many files or reading many references, to a subagent so only its summary enters your context. Route routine work to a smaller model, and keep planning and ambiguous failures on the larger one. Do not delegate work you can finish in a handful of tool calls, and do not use subagents to verify or double-check your own work.
+
+# Communication
+
+Lead with the outcome: the first sentence says what happened or what you found, with supporting detail after it for readers who want it. While working, send a brief update only when you find something important or change direction. Keep responses concise.
+
+# Prior art
+
+Before implementing a feature that is new to this codebase or unfamiliar to you, search GitHub for open-source projects that solve the same problem and compare their approaches instead of writing from scratch. Established projects have already met the edge cases a first draft misses, so borrowing a proven design is faster and safer than inventing one.
+
+State what you found in a few lines (the projects, the design you will borrow, and why) before you start coding. Skip this for small edits and for work that follows a pattern already present in this repository. Respect each project's license when you reuse its ideas or code.
